@@ -47,7 +47,7 @@ on bk99.de ([German version](https://www.bk99.de/blog/2026/kac/)). The info page
 | No access point in normal operation | The device is a Wi-Fi client only. |
 | Setup | Cut the power 5 times in a row → Wi-Fi `KAC-<chip ID>` with a **random password shown only on the display**. |
 | Flicker-free | Each row is fully drawn in memory and transferred in one piece; only rows that changed are redrawn. |
-| Clock and date | Set by the device itself via NTP (Europe/Berlin). |
+| Clock and date | Set by the device itself via NTP; time zone configurable (default Europe/Berlin). |
 | Protected | Data and firmware updates require the device key. |
 | Over-the-air updates | `http://<device>/update` |
 
@@ -117,8 +117,8 @@ never triggers setup.
 |---|---|
 | <img src="docs/images/info-page.jpg" width="280" alt="KAC info page: clock, date, version, Wi-Fi, IP address, signal"> | <img src="docs/images/setup-screen.jpg" width="280" alt="KAC setup screen with Wi-Fi name, random password and http://192.168.4.1/"> |
 
-*Photos of early versions (0.1.x): the info page now also shows a QR code, the setup Wi-Fi is called `KAC-<chip ID>`,
-and the empty part of the bars is grey instead of olive.*
+*Photos of early versions (0.1.x): since then the device texts are English, the info page also shows a QR code,
+the setup Wi-Fi is called `KAC-<chip ID>`, and the empty part of the bars is grey instead of olive.*
 
 ### 3.3 Row types
 
@@ -192,7 +192,7 @@ DIO, 4 MB, 40 MHz). The image has to fit into the free space next to the factory
 KAC currently needs about 390 KB. If the upload is rejected ("Not Enough Space"), nothing has changed.
 
 The factory firmware keeps its Wi-Fi settings in its own file system, which KAC does not read. After the
-update KAC therefore usually starts in setup mode: the display shows **"Einrichtung"** with the Wi-Fi name
+update KAC therefore usually starts in setup mode: the display shows **"Setup"** with the Wi-Fi name
 `KAC-<chip ID>` and a password – continue with chapter 5, steps 3–5.
 
 KAC does not touch the file system, so the factory firmware including its settings can be restored later by
@@ -202,9 +202,11 @@ uploading the factory image (available from GeekMagic on GitHub) via KAC's `/upd
 
 1. **Disconnect and reconnect the power 5 times in a row.** Let it run for a few seconds each time, but
    **less than 10 seconds**.
-2. The display shows **"Einrichtung"** (setup), the Wi-Fi name `KAC-<chip ID>` (e.g. `KAC-4670fa`) and a **password**.
+2. The display shows **"Setup"**, the Wi-Fi name `KAC-<chip ID>` (e.g. `KAC-4670fa`) and a **password**.
 3. Connect to this Wi-Fi and open `http://192.168.4.1/`.
-4. Pick your network from the list (or type its name), enter the password, **save**.
+4. Pick your network from the list (or type its name), enter the password and, if needed, the time zone as a
+   POSIX TZ string (default `CET-1CEST,M3.5.0,M10.5.0/3` = Europe/Berlin), **save**. To change only the time
+   zone, leave the password empty: the stored one is kept for the same network.
 5. The device restarts and connects. The access point is off again.
 
 Without input, setup ends after **15 minutes** with a restart. The setup page also offers the firmware update as
@@ -223,6 +225,7 @@ a rescue path in case of broken firmware.
 {
   "b": 90,                       // brightness 0..100              (optional)
   "rot": 30,                     // seconds per page, 5..255        (optional, default 30)
+  "tz": "CET-1CEST,M3.5.0,M10.5.0/3",  // POSIX time zone             (optional, stored only when changed)
   "seiten": [                    // pages, 1..3
     {
       "t": "Internet",           // page title, up to 15 characters
@@ -243,6 +246,7 @@ a rescue path in case of broken firmware.
 |---|---|
 | `b` | brightness |
 | `rot` | rotation interval |
+| `tz` | time zone (POSIX TZ string) |
 | `seiten` | pages |
 | `t` | page title |
 | `z` | rows (*Zeilen*) |
@@ -262,7 +266,7 @@ Every update **replaces all pages**. Missing rows are empty.
 
 ```json
 {"name":"KleinerAnzeigeComputer-4670fa","version":"0.2.1","uptime":3600,"ssid":"MyWiFi","rssi":-45,"heap":33800,
- "seiten":3,"seite":1,"daten_alter_s":4,"zeit":1791838000}
+ "seiten":3,"seite":1,"daten_alter_s":4,"zeit":1791838000,"tz":"CET-1CEST,M3.5.0,M10.5.0/3"}
 ```
 
 `daten_alter_s` = seconds since the last update (−1: never), `seite` = page currently shown (−1: info page),
@@ -375,6 +379,7 @@ Configuration file (`KEY=value`, default `/root/.config/kac/kac.env`, other path
 | `FW_TITLE`, `NAS_TITLE` | page titles | `Firewall`, `NAS` |
 | `NAS_SSH`, `NAS_KNOWN_HOSTS`, `NAS_DISKS`, `NAS_MOUNT` | NAS via SSH (empty `NAS_SSH`: no NAS page) | `root@nas`, `sda sdb`, `/mnt/data` |
 | `INTERVALL`, `LANGSAM`, `ROT_S` | seconds: fast values, slow values, page rotation | `5`, `60`, `30` |
+| `TZ` | time zone sent to the device (optional) | `EST5EDT,M3.2.0,M11.1.0` |
 | `HELL_TAG`, `HELL_NACHT`, `NACHT_VON`, `NACHT_BIS` | brightness by day/night, night hours | `90`, `10`, `23`, `7` |
 
 Worth noting:
@@ -421,8 +426,6 @@ curl -u "admin:$KAC_TOKEN" -F "firmware=@.pio/build/smalltv/firmware.bin" http:/
 - 3 pages × 8 rows, texts up to 27 bytes, titles up to 15 bytes, JSON up to 4 KB.
 - No graphics or images, no free choice of colors (normal/alert only).
 - No HTTPS (the ESP8266 has too little memory for it).
-- Time zone fixed to Europe/Berlin (`TZ_INFO` in the code).
-- The device UI texts (setup screen, info page) are in German.
 
 ## 11. License
 

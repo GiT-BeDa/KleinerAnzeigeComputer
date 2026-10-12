@@ -24,6 +24,7 @@ CFG = {
     "KAC_TOKEN": "",                              # device key of the KAC firmware
     "INTERVALL": "10", "LANGSAM": "60", "ROT_S": "30",
     "HELL_TAG": "90", "HELL_NACHT": "10", "NACHT_VON": "23", "NACHT_BIS": "7",
+    "TZ": "",                   # POSIX time zone for the device, e.g. CET-1CEST,M3.5.0,M10.5.0/3 (empty: keep)
     # Uplinks: "name:interface:max_down:max_up:gateway_v4,gateway_v6" separated by ";" (OPNsense interface key
     # and gateway names). max_* = full-scale bar in Mbit/s, ideally the narrowest point (line or shaper).
     "LINES": "WAN:wan:100:40:WAN_DHCP,WAN_DHCP6",
@@ -301,7 +302,10 @@ def helligkeit():
 class Geraet:
     """KAC firmware (GiT-BeDa/KleinerAnzeigeComputer): POST /api/seiten with X-Token."""
     def senden(self, seiten):
-        body = json.dumps({"b": helligkeit(), "rot": int(CFG["ROT_S"]), "seiten": seiten}, ensure_ascii=False)
+        daten = {"b": helligkeit(), "rot": int(CFG["ROT_S"]), "seiten": seiten}
+        if CFG["TZ"]:
+            daten["tz"] = CFG["TZ"]
+        body = json.dumps(daten, ensure_ascii=False)
         return requests.post(CFG["TV_URL"] + "/api/seiten", data=body.encode(), timeout=10,
                              headers={"X-Token": CFG["KAC_TOKEN"], "Content-Type": "application/json"})
 

@@ -11,7 +11,7 @@
 //
 // Firmware update: http://<ip>/update, user admin, password = KAC_TOKEN (set at build time).
 //
-// Identifiers and the texts shown on the device are German; see README.md for the API field names.
+// Identifiers are German; see README.md for the API field names. Texts shown on the device are English.
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -36,7 +36,7 @@ static_assert(sizeof(KAC_TOKEN) > 16, "KAC_TOKEN too short or empty: KAC_TOKEN=<
 // form "KAC-" + chip ID so that it fits on one line of the setup screen
 static char geraeteName[33];
 static char apName[16];
-static const char *TZ_INFO = "CET-1CEST,M3.5.0,M10.5.0/3";
+static const char *TZ_STANDARD = "CET-1CEST,M3.5.0,M10.5.0/3";   // POSIX TZ, default Europe/Berlin
 static const uint8_t PIN_BL = 5;                       // backlight, inverted
 static const uint8_t GESTE_ANZAHL = 5;                  // boots in a row that start setup mode
 static const uint32_t GESTE_FENSTER_MS = 10000;         // a boot counts if it runs shorter than this
@@ -44,7 +44,7 @@ static const uint32_t EINRICHTUNG_MAX_MS = 15UL * 60 * 1000;
 static const uint32_t DATEN_ALT_MS = 3UL * 60 * 1000;   // after that: red dot in the header
 // Shown as QR code on the info page until the first data arrives: the build guide on bk99.de
 static const char *ANLEITUNG_URL = "https://www.bk99.de/blog/2026/kac/";
-static const char *ANLEITUNG_TEXT[] = {"Anleitung:", "bk99.de", "/blog/2026", "/kac/"};
+static const char *ANLEITUNG_TEXT[] = {"Guide:", "bk99.de", "/blog/2026", "/kac/"};
 static const int RAND_R = 228;   // right text edge: the outermost pixels are hidden by the case
 
 // Colors (RGB565). Rows are drawn in an 8-bit sprite (RGB332: 3 bits red, 3 green, 2 blue), so every color
@@ -98,6 +98,7 @@ struct Speicher {          // EEPROM (one flash sector), survives restarts and f
   uint8_t starts;
   char ssid[33];
   char pass[65];
+  char tz[48];             // POSIX time zone; appended later, so older settings keep their Wi-Fi data
 };
 static Speicher cfg;
 static const uint8_t MAGIC = 0x4B;
@@ -108,6 +109,26 @@ static bool gesteZurueckgesetzt = false;
 static char apPass[11];
 
 // ---------------------------------------------------------------- Helpers
+static bool tzGueltig(const char *s, size_t max) {   // printable ASCII, 3..max-1 characters
+  size_t n = strnlen(s, max);
+  if (n < 3 || n >= max) return false;
+  for (size_t i = 0; i < n; i++) if (s[i] < 0x20 || s[i] > 0x7E) return false;
+  return true;
+}
+
+static void speichern();
+
+// Set the time zone; write to flash only if it changed (the dashboard sends it with every update)
+static void zeitzoneSetzen(const char *tz) {
+  if (!tzGueltig(tz, sizeof(cfg.tz))) return;
+  if (strcmp(cfg.tz, tz) != 0) {
+    strlcpy(cfg.tz, tz, sizeof(cfg.tz));
+    speichern();
+  }
+  setenv("TZ", cfg.tz, 1);
+  tzset();
+}
+
 static void helligkeit(uint8_t prozent) {
   uint32_t stufe = (uint32_t)min<uint8_t>(prozent, 100) * 1023 / 100;
   analogWrite(PIN_BL, 1023 - stufe);   // inverted: LOW = on
@@ -226,13 +247,13 @@ static void kopfZeichnen(bool erzwingen) {
 // Info page until the first data arrives: status in rows 0-1, below it a QR code to the build guide
 static void infoSeite(Seite &s) {
   memset(&s, 0, sizeof(s));
-  strlcpy(s.titel, "warte auf Daten", sizeof(s.titel));
+  strlcpy(s.titel, "no data yet", sizeof(s.titel));
   bool online = WiFi.status() == WL_CONNECTED;
   s.z[0].typ = 'h';
   strlcpy(s.z[0].l, "KAC " KAC_VERSION, sizeof(s.z[0].l));
   strlcpy(s.z[0].v, online ? WiFi.localIP().toString().c_str() : "-", sizeof(s.z[0].v));
   s.z[1].typ = 'k';
-  strlcpy(s.z[1].l, online ? cfg.ssid : "verbinde ...", sizeof(s.z[1].l));
+  strlcpy(s.z[1].l, online ? cfg.ssid : "connecting ...", sizeof(s.z[1].l));
   if (online) snprintf(s.z[1].v, sizeof(s.z[1].v), "%d dBm", (WiFi.RSSI() / 3) * 3);   // 3-dB steps
   for (int i = 2; i < ZEILEN; i++) s.z[i].typ = 'q';   // area of the QR code, not drawn as rows
 }
@@ -340,18 +361,19 @@ static void apiSeiten() {
   seitenAnzahl = n;
   if (doc["b"].is<int>()) { hell = doc["b"]; helligkeit(hell); }
   if (doc["rot"].is<int>()) rotS = doc["rot"];
+  if (doc["tz"].is<const char *>()) zeitzoneSetzen(doc["tz"]);
   letzteDaten = millis();
   datenDa = true;
   server.send(200, "application/json", String("{\"ok\":true,\"seiten\":") + n + "}");
 }
 
 static void apiStatus() {
-  char buf[320];
+  char buf[400];
   snprintf(buf, sizeof(buf),
            "{\"name\":\"%s\",\"version\":\"%s\",\"uptime\":%lu,\"ssid\":\"%s\","
-           "\"rssi\":%d,\"heap\":%u,\"seiten\":%u,\"seite\":%d,\"daten_alter_s\":%ld,\"zeit\":%ld}",
+           "\"rssi\":%d,\"heap\":%u,\"seiten\":%u,\"seite\":%d,\"daten_alter_s\":%ld,\"zeit\":%ld,\"tz\":\"%s\"}",
            geraeteName, KAC_VERSION, millis() / 1000, cfg.ssid, WiFi.RSSI(), ESP.getFreeHeap(), seitenAnzahl, aktSeite,
-           datenDa ? (long)((millis() - letzteDaten) / 1000) : -1L, (long)time(nullptr));
+           datenDa ? (long)((millis() - letzteDaten) / 1000) : -1L, (long)time(nullptr), cfg.tz);
   server.send(200, "application/json", buf);
 }
 
@@ -370,16 +392,20 @@ static void einrichtungSeite() {
   String h = F("<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width'>"
                "<title>KAC</title><style>body{font-family:sans-serif;max-width:420px;margin:1em auto;"
                "padding:0 1em}input,select,button{width:100%;padding:.5em;margin:.3em 0;font-size:1em}</style></head><body>"
-               "<h2>KAC – KleinerAnzeigeComputer</h2><form method=post action=/speichern><label>WLAN</label><select name=ssid>");
+               "<h2>KAC – KleinerAnzeigeComputer</h2><form method=post action=/speichern><label>Wi-Fi</label><select name=ssid>");
   for (int i = 0; i < n; i++) {
     String s = htmlEsc(WiFi.SSID(i));
     h += "<option value=\"" + s + "\"" + (WiFi.SSID(i) == cfg.ssid ? " selected" : "") + ">" + s + " (" +
          WiFi.RSSI(i) + " dBm)</option>";
   }
-  h += F("</select><label>oder Name von Hand</label><input name=ssid2 maxlength=32>"
-         "<label>Passwort</label><input name=pass type=password maxlength=64>"
-         "<button>Speichern und neu starten</button></form>"
-         "<p><a href=/update>Firmware-Update</a> (Benutzer admin)</p></body></html>");
+  h += F("</select><label>or enter the name</label><input name=ssid2 maxlength=32>"
+         "<label>Password (empty: keep the stored one for the same network)</label>"
+         "<input name=pass type=password maxlength=64>");
+  h += "<label>Time zone (POSIX TZ, e.g. CET-1CEST,M3.5.0,M10.5.0/3)</label><input name=tz maxlength=47 value=\"" +
+       htmlEsc(cfg.tz) + "\">";
+  h += F(
+         "<button>Save and restart</button></form>"
+         "<p><a href=/update>Firmware update</a> (user admin)</p></body></html>");
   server.send(200, "text/html", h);
 }
 
@@ -387,15 +413,17 @@ static void einrichtungSpeichern() {
   String ssid = server.arg("ssid2").length() ? server.arg("ssid2") : server.arg("ssid");
   String pass = server.arg("pass");
   if (ssid.length() == 0 || ssid.length() > 32 || pass.length() > 64) {
-    server.send(400, "text/plain", "WLAN-Name oder Passwort ungueltig");
+    server.send(400, "text/plain", "Invalid Wi-Fi name or password");
     return;
   }
+  bool gleichesNetz = ssid == cfg.ssid;
   strlcpy(cfg.ssid, ssid.c_str(), sizeof(cfg.ssid));
-  strlcpy(cfg.pass, pass.c_str(), sizeof(cfg.pass));
+  if (!(gleichesNetz && pass.length() == 0)) strlcpy(cfg.pass, pass.c_str(), sizeof(cfg.pass));   // empty: keep
+  if (tzGueltig(server.arg("tz").c_str(), sizeof(cfg.tz))) strlcpy(cfg.tz, server.arg("tz").c_str(), sizeof(cfg.tz));
   speichern();
   server.send(200, "text/html",
-              "<!doctype html><meta charset=utf-8><p>Gespeichert. Das Ger&auml;t startet neu und verbindet sich mit "
-              "dem WLAN. Der Zugangspunkt verschwindet.</p>");
+              "<!doctype html><meta charset=utf-8><p>Saved. The device restarts and connects to "
+              "the Wi-Fi. The access point disappears.</p>");
   delay(1500);
   ESP.restart();
 }
@@ -414,11 +442,11 @@ static void einrichtungStarten() {
   updater.setup(&server, "/update", "admin", KAC_TOKEN);
   server.begin();
   char z2[48], z3[48];
-  snprintf(z2, sizeof(z2), "Passwort: %s", apPass);
+  snprintf(z2, sizeof(z2), "Password: %s", apPass);
   snprintf(z3, sizeof(z3), "http://%s/", WiFi.softAPIP().toString().c_str());
   char z1[32];
-  snprintf(z1, sizeof(z1), "WLAN: %s", apName);
-  const char *zeilen[] = {"Einrichtung", z1, z2, z3, "", "Ende nach 15 min"};
+  snprintf(z1, sizeof(z1), "Wi-Fi: %s", apName);
+  const char *zeilen[] = {"Setup", z1, z2, z3, "", "Ends after 15 min"};
   vollbildText(zeilen, 6);
   helligkeit(80);
 }
@@ -448,12 +476,12 @@ static void normalStarten() {
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
   char z2[48];
-  snprintf(z2, sizeof(z2), "WLAN %s ...", cfg.ssid);
+  snprintf(z2, sizeof(z2), "Wi-Fi %s ...", cfg.ssid);
   const char *zeilen[] = {"KAC", z2};
   vollbildText(zeilen, 2);
   verbinden(cfg.ssid, cfg.pass, 20000);   // after that the SDK keeps trying (auto-reconnect)
 
-  configTime(TZ_INFO, "pool.ntp.org", "time.cloudflare.com");
+  configTime(cfg.tz, "pool.ntp.org", "time.cloudflare.com");
   server.collectHeaders("X-Token");
   server.on("/api/seiten", HTTP_POST, apiSeiten);
   server.on("/api/status", HTTP_GET, apiStatus);
@@ -493,6 +521,7 @@ void setup() {
       strlcpy(cfg.pass, (const char *)sc.password, sizeof(cfg.pass));
     }
   }
+  if (!tzGueltig(cfg.tz, sizeof(cfg.tz))) strlcpy(cfg.tz, TZ_STANDARD, sizeof(cfg.tz));   // also after updating from <0.2.3
   cfg.starts++;
   bool geste = cfg.starts >= GESTE_ANZAHL;
   if (geste) cfg.starts = 0;
