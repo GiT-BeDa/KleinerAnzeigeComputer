@@ -1,0 +1,21 @@
+# Example systemd unit for the KAC dashboard. Copy to /etc/systemd/system/, adjust paths, then:
+#   systemctl daemon-reload && systemctl enable --now kac-dashboard.service
+[Unit]
+Description=KAC dashboard (KleinerAnzeigeComputer)
+Documentation=https://github.com/GiT-BeDa/KleinerAnzeigeComputer
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/kac/kac.env
+
+[Service]
+Environment=KAC_CONFIG=/etc/kac/kac.env
+ExecStart=/usr/bin/python3 -I /opt/kac/tools/kac_dashboard.py
+Restart=always
+RestartSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
