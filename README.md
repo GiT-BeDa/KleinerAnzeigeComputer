@@ -12,6 +12,8 @@ On the network each device calls itself `KleinerAnzeigeComputer-<chip ID>` (host
 **The story behind it, with photos:** [KAC: A small cube becomes a status display for network, firewall and NAS](https://www.bk99.de/en/blog/2026/kac/)
 on bk99.de ([German version](https://www.bk99.de/blog/2026/kac/)). The info page of the device links there via QR code.
 
+<p align="center"><img src="docs/images/two-devices.jpg" width="600" alt="Two SmallTV Ultra running KAC: a test page and the NAS page"></p>
+
 **Contents**
 
 1. [Overview](#1-overview)
@@ -110,6 +112,13 @@ never triggers setup.
 - Until the first data arrives, the device shows an **info page**: version, IP address, Wi-Fi network and
   signal strength, plus a **QR code** to the build guide at https://www.bk99.de/blog/2026/kac/ (German).
 - The date format is DD/MM/YYYY.
+
+| Info page (no data yet) | Setup screen |
+|---|---|
+| <img src="docs/images/info-page.jpg" width="280" alt="KAC info page: clock, date, version, Wi-Fi, IP address, signal"> | <img src="docs/images/setup-screen.jpg" width="280" alt="KAC setup screen with Wi-Fi name, random password and http://192.168.4.1/"> |
+
+*Photos of early versions (0.1.x): the info page now also shows a QR code, the setup Wi-Fi is called `KAC-<chip ID>`,
+and the empty part of the bars is grey instead of olive.*
 
 ### 3.3 Row types
 
