@@ -45,10 +45,11 @@ on bk99.de ([German version](https://www.bk99.de/blog/2026/kac/)). The info page
 | Feature | Implementation |
 |---|---|
 | No access point in normal operation | The device is a Wi-Fi client only. |
-| Setup | Cut the power 5 times in a row → Wi-Fi `KAC-<chip ID>` with a **random password shown only on the display**. |
+| Setup | Cut the power 3 times in a row → Wi-Fi `KAC-<chip ID>` with a **random password shown only on the display**. |
 | Flicker-free | Each row is fully drawn in memory and transferred in one piece; only rows that changed are redrawn. |
 | Clock and date | Set by the device itself via NTP; time zone configurable (default Europe/Berlin). |
-| Protected | Data and firmware updates require the device key. |
+| Protected | Data and firmware updates require a per-device key, created by the device itself. |
+| Ready-made image | Download, upload via the factory update page, done – or build it yourself. |
 | Over-the-air updates | `http://<device>/update` |
 
 The API field names are German (`seiten` = pages, `z` = rows, …); they are explained in [chapter 6](#6-api).
@@ -78,13 +79,14 @@ Color order BGR, colors inverted. Pinout source: ESPHome device page "GeekMagic 
 Power on
    │
    ├─ boot counter in flash +1
-   │     └─ 5 boots in a row, each shorter than 10 s?  ──yes──▶ setup mode (chapter 5)
+   │     └─ 3 boots in a row, each shorter than 10 s?  ──yes──▶ setup mode (chapter 5)
    │
    ├─ no Wi-Fi stored yet?                             ──yes──▶ setup mode
    │     (on the very first boot KAC takes over a Wi-Fi network stored in the
    │      ESP8266 system area, if there is one)
    │
    └─ normal operation
+         ├─ no device key yet? create a random one (16 characters) and store it
          ├─ access point permanently off (also in the ESP8266 system settings)
          ├─ connect to the stored Wi-Fi, then reconnect automatically
          ├─ time via NTP (pool.ntp.org, time.cloudflare.com)
@@ -163,6 +165,7 @@ example. Until the first data arrives, it is 80.
 |---|---|
 | Wi-Fi in normal operation | client only, no access point |
 | Setup Wi-Fi | only after the power-cycle gesture or if no Wi-Fi is stored; WPA2 with a 10-character random password shown only on the display; ends after 15 minutes |
+| Device key | created randomly by each device on first start, stored in flash; shown on the setup screen, on the setup page (where you can set your own, 1–32 printable characters) and on the info page until the first data has arrived |
 | Sending data | header `X-Token` with the device key, otherwise `403` |
 | Firmware update | HTTP Basic auth `admin` / device key, otherwise `401` |
 | `GET /api/status` | no authentication, contains no secrets |
@@ -172,42 +175,56 @@ stored in the device's flash; anyone with physical access to the device can read
 
 ## 4. Installation
 
+You can either **flash the ready-made image** or **build the firmware yourself** (chapter 8). Both give the
+same result; the image contains no secret, every device creates its own key.
+
 | Starting point | Path |
 |---|---|
-| **GeekMagic factory firmware** | upload `firmware.bin` via its update page, see below |
-| **KAC already installed** | `/update`, see chapter 8 |
+| **GeekMagic factory firmware** | upload the image via its update page, see below |
+| **KAC already installed** | `/update` with user `admin` and the device key, see chapter 8 |
 | Device no longer boots | serial: open the case, hold GPIO0 to GND at power-on, `esptool.py write_flash 0x0 firmware.bin` |
 
-**From the factory firmware** (tested with Ultra-V9.0.51): the factory firmware has a standard Arduino
-update page at `http://<device>/update`. Upload the image in the **firmware** field (not "filesystem"), from a
-browser or with curl:
+### 4.1 Flash the ready-made image (no compiler needed)
 
-```sh
-curl -F "firmware=@.pio/build/smalltv/firmware.bin" http://<device>/update
-# → "Update Success! Rebooting..."
-```
+1. Download the latest image from [`firmware/`](firmware/), e.g.
+   [kac-0.3.3.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.3.3.bin), and check its MD5
+   (`cf0927dbc4e218216e7548fa29a6d861` for 0.3.3, all values in [`firmware/README.md`](firmware/README.md)).
+2. Find the device's address in your router (the factory firmware also shows it on the display) and open
+   `http://<device>/update`.
+3. Choose the file in the **firmware** field (not "filesystem") and click **Update**, or use curl:
+   ```sh
+   curl -F "firmware=@kac-0.3.3.bin" http://<device>/update
+   # → "Update Success! Rebooting..."
+   ```
+4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the
+   **device key** shown there; your dashboard needs it.
 
-This works because KAC is built exactly like the factory image (Arduino ESP8266 core, same eboot bootloader,
-DIO, 4 MB, 40 MHz). The image has to fit into the free space next to the factory firmware, roughly 500 KB;
-KAC currently needs about 390 KB. If the upload is rejected ("Not Enough Space"), nothing has changed.
+Tested with factory firmware Ultra-V9.0.51. It works because KAC is built exactly like the factory image
+(Arduino ESP8266 core, same eboot bootloader, DIO, 4 MB, 40 MHz). The image has to fit into the free space next
+to the factory firmware, roughly 500 KB; KAC needs about 390 KB. If the upload is rejected
+("Not Enough Space"), nothing has changed.
 
-The factory firmware keeps its Wi-Fi settings in its own file system, which KAC does not read. After the
-update KAC therefore usually starts in setup mode: the display shows **"Setup"** with the Wi-Fi name
-`KAC-<chip ID>` and a password – continue with chapter 5, steps 3–5.
+The factory firmware keeps its Wi-Fi settings in its own file system, which KAC does not read, so you enter
+the Wi-Fi once more. KAC does not touch that file system either: the factory firmware including its settings
+can be restored later by uploading the factory image (available from GeekMagic on GitHub) via KAC's `/update`.
 
-KAC does not touch the file system, so the factory firmware including its settings can be restored later by
-uploading the factory image (available from GeekMagic on GitHub) via KAC's `/update`.
+### 4.2 Build it yourself
+
+See chapter 8. No key is needed for building.
 
 ## 5. Wi-Fi setup
 
-1. **Disconnect and reconnect the power 5 times in a row.** Let it run for a few seconds each time, but
-   **less than 10 seconds**.
-2. The display shows **"Setup"**, the Wi-Fi name `KAC-<chip ID>` (e.g. `KAC-4670fa`) and a **password**.
+1. **Disconnect and reconnect the power 3 times in a row.** Let it run for a few seconds each time, but
+   **less than 10 seconds**. (Not needed right after installing: without stored Wi-Fi, setup starts by itself.)
+2. The display shows **"Setup"**, the Wi-Fi name `KAC-<chip ID>` (e.g. `KAC-4670fa`), a **password** and the
+   **device key**.
 3. Connect to this Wi-Fi and open `http://192.168.4.1/`.
-4. Pick your network from the list (or type its name), enter the password and, if needed, the time zone as a
-   POSIX TZ string (default `CET-1CEST,M3.5.0,M10.5.0/3` = Europe/Berlin), **save**. To change only the time
-   zone, leave the password empty: the stored one is kept for the same network.
-5. The device restarts and connects. The access point is off again.
+4. Pick your network from the list (or type its name) and enter its password. Optionally set the time zone as
+   a POSIX TZ string (default `CET-1CEST,M3.5.0,M10.5.0/3` = Europe/Berlin) and your own **device key**
+   (1–32 printable characters; empty keeps the current one). **Save**. To change only the time zone or the
+   key, leave the Wi-Fi password empty: the stored one is kept for the same network.
+5. The device restarts and connects. The access point is off again. Until the first data arrives, the info
+   page shows the device key once more.
 
 Without input, setup ends after **15 minutes** with a restart. The setup page also offers the firmware update as
 a rescue path in case of broken firmware.
@@ -371,7 +388,7 @@ Configuration file (`KEY=value`, default `/root/.config/kac/kac.env`, other path
 | Key | Meaning | Example |
 |---|---|---|
 | `OPNSENSE_URL`, `OPNSENSE_KEY`, `OPNSENSE_SECRET` | firewall API (required) | `https://192.168.1.1` |
-| `KAC_TOKEN` | device key (required) | |
+| `KAC_TOKEN` | device key of the display (required; shown on its setup screen) | |
 | `TV_URL` | KAC device | `http://192.168.1.50` |
 | `LINES` | uplinks: `name:interface:max_down:max_up:gw_v4,gw_v6`, separated by `;` | `Fiber:opt1:100:40:FIBER_GW,FIBER_GW6;DSL:wan:100:40:WAN_GW,WAN_GW6` |
 | `VPN_GATEWAY` | gateway for the VPN latency (optional) | `WG_GW` |
@@ -395,17 +412,15 @@ Worth noting:
 
 ```sh
 pip install platformio
-export KAC_TOKEN=$(python3 -c 'import secrets;print(secrets.token_hex(16))')   # create once, store safely
 pio run                                   # image: .pio/build/smalltv/firmware.bin
-curl -u "admin:$KAC_TOKEN" -F "firmware=@.pio/build/smalltv/firmware.bin" http://<device>/update
+curl -u "admin:<device key>" -F "firmware=@.pio/build/smalltv/firmware.bin" http://<device>/update
 ```
 
-- The device key (`KAC_TOKEN`, at least 17 characters) is passed **only via the environment**. Without it the
-  build fails.
-- **The built image contains the key.** Never publish images; `.pio/` and `*.bin` are in `.gitignore`.
-- If you change the key, the new firmware must still be uploaded with the **old** key.
-- The Wi-Fi settings survive updates; they live in a separate flash sector.
-- Version: `-DKAC_VERSION` in `platformio.ini`.
+- The build needs no key; every device creates its own on first start and keeps it across updates.
+- Optional, for your own fleet: `KAC_TOKEN=<key> pio run` builds an image that uses `<key>` as the **initial**
+  key on devices that have none yet. Such an image contains the key – do not publish it.
+- The Wi-Fi settings, time zone and key survive updates; they live in a separate flash sector.
+- Version: `-DKAC_VERSION` in `platformio.ini`. Ready-made images go to `firmware/` with their checksums.
 
 ## 9. Troubleshooting
 
@@ -415,11 +430,12 @@ curl -u "admin:$KAC_TOKEN" -F "firmware=@.pio/build/smalltv/firmware.bin" http:/
 | Clock shows `--:--` | no NTP response yet; allow DNS/NTP in the network |
 | Info page stays on screen | no data arrives: program not running, wrong key (`403`) or wrong address |
 | `403` when sending | `X-Token` wrong or missing |
+| Device key forgotten | power-cycle gesture (chapter 5): the setup screen and page show it, and you can set a new one |
 | `400 json` | invalid JSON (e.g. comments included) |
 | Characters missing | only ASCII and `°` are displayed |
 | Text cut off or overlapping | shorten the text (chapter 7.1) |
 | Device unreachable | setup via the power-cycle gesture (chapter 5), which also offers the firmware update |
-| Keeps rebooting | if the firmware crashes within 10 s each time, 5 crashes in a row open the setup; upload working firmware there. Otherwise: power-cycle gesture |
+| Keeps rebooting | if the firmware crashes within 10 s each time, 3 crashes in a row open the setup; upload working firmware there. Otherwise: power-cycle gesture |
 
 ## 10. Limits
 
