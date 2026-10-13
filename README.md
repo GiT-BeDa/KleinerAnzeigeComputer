@@ -50,6 +50,7 @@ on bk99.de ([German version](https://www.bk99.de/blog/2026/kac/)). The device's 
 | Clock and date | Set by the device itself via NTP; time zone configurable (default Europe/Berlin). |
 | Protected | Data and firmware updates require a per-device key, created by the device itself. |
 | Ready-made image | Download, upload via the factory update page, done – or build it yourself. |
+| Settings page | `http://<device>/` (user `admin`, password = device key): status, brightness schedule, time zone, key, firmware update |
 | Over-the-air updates | `http://<device>/update` |
 
 The API field names are German (`seiten` = pages, `z` = rows, …); they are explained in [chapter 6](#6-api).
@@ -193,13 +194,13 @@ same result; the image contains no secret, every device creates its own key.
 ### 4.1 Flash the ready-made image (no compiler needed)
 
 1. Download the latest image from [`firmware/`](firmware/), e.g.
-   [kac-0.5.0.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.5.0.bin), and check its MD5
-   (`a1796b1dd80d08960d2835a6be20f83e` for 0.5.0, all values in [`firmware/README.md`](firmware/README.md)).
+   [kac-0.5.1.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.5.1.bin), and check its MD5
+   (`dc019104d4d06dc8e98d8536983a4c4f` for 0.5.1, all values in [`firmware/README.md`](firmware/README.md)).
 2. Find the device's address in your router (the factory firmware also shows it on the display) and open
    `http://<device>/update`.
 3. Choose the file in the **firmware** field (not "filesystem") and click **Update**, or use curl:
    ```sh
-   curl -F "firmware=@kac-0.5.0.bin" http://<device>/update
+   curl -F "firmware=@kac-0.5.1.bin" http://<device>/update
    # → "Update Success! Rebooting..."
    ```
 4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the
@@ -305,6 +306,13 @@ Every update **replaces all pages**. Missing rows are empty.
 Changes the device key. Header `X-Token: <current key>`; body `{"key":"<new key>"}` (1–32 printable characters,
 no spaces) or `{}` for a new random key. Answer `{"ok":true,"key":"<new key>"}`; the new key applies at once to the
 data API and the firmware update.
+
+### `GET /` – settings page
+
+Web page for people (HTTP Basic auth: user `admin`, password = device key): status line (name, version, IP,
+signal, uptime, data age) and the settings brightness by day/at night with night hours, time zone and device
+key. Saving applies at once without a restart and writes only what changed. Wi-Fi is only changed on the setup
+page (chapter 5), so that a typo cannot take the device off the network.
 
 ### `GET|POST /update`
 

@@ -512,6 +512,66 @@ static String htmlEsc(const String &s) {
   return o;
 }
 
+// ---------------------------------------------------------------- Web: settings in normal operation
+// http://<device>/ with HTTP Basic auth (admin / device key): status and settings that do not risk the
+// connection (brightness schedule, time zone, device key). Wi-Fi stays on the setup page.
+static void einstellungenSeite(const char *meldung) {
+  char status[200], alter[24];
+  if (!datenDa) strlcpy(alter, "none yet", sizeof(alter));
+  else { dauerText(alter, sizeof(alter), (millis() - letzteDaten) / 1000); strlcat(alter, " ago", sizeof(alter)); }
+  char lauf[24];
+  dauerText(lauf, sizeof(lauf), millis() / 1000);
+  snprintf(status, sizeof(status), "%s &middot; KAC %s &middot; %s &middot; %d dBm &middot; up %s &middot; data %s",
+           geraeteName, KAC_VERSION, WiFi.localIP().toString().c_str(), WiFi.RSSI(), lauf, alter);
+  String h = F("<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+               "<title>KAC</title><style>body{font-family:sans-serif;max-width:460px;margin:1em auto;padding:0 1em}"
+               "input,button{padding:.5em;margin:.3em 0;font-size:1em;box-sizing:border-box}label{display:block;margin-top:.8em}"
+               ".w{width:100%}.q{width:23%}.m{color:#080}</style></head><body><h2>KAC – KleinerAnzeigeComputer</h2>");
+  h += "<p><small>" + String(status) + "</small></p>";
+  if (meldung[0]) h += "<p class=m>" + String(meldung) + "</p>";
+  h += "<form method=post action=/einstellungen>"
+       "<label>Brightness by day / at night in %, night from / to (hour, local time)</label>"
+       "<input class=q name=ht type=number min=0 max=100 value=" + String(cfg.hellTag) + "> "
+       "<input class=q name=hn type=number min=0 max=100 value=" + String(cfg.hellNacht) + "> "
+       "<input class=q name=nv type=number min=0 max=23 value=" + String(cfg.nachtVon) + "> "
+       "<input class=q name=nb type=number min=0 max=23 value=" + String(cfg.nachtBis) + ">"
+       "<label>Time zone (POSIX TZ, e.g. CET-1CEST,M3.5.0,M10.5.0/3)</label>"
+       "<input class=w name=tz maxlength=47 value=\"" + htmlEsc(cfg.tz) + "\">"
+       "<label>Device key (for the dashboard and as the password here; up to 32 characters, no spaces)</label>"
+       "<input class=w name=key maxlength=32 value=\"" + htmlEsc(cfg.token) + "\">"
+       "<button class=w>Save</button></form>"
+       "<p>Brightness sent by a dashboard (\"b\") overrides the schedule while data is arriving. "
+       "Wi-Fi is changed on the setup page (3 short power cycles).</p>"
+       "<p><a href=/update>Firmware update</a> &middot; <a href=/api/status>Status (JSON)</a> &middot; "
+       "<a href=https://www.bk99.de/en/blog/2026/kac/>Guide</a></p></body></html>";
+  server.send(200, "text/html", h);
+}
+
+static bool angemeldet() {
+  if (server.authenticate("admin", cfg.token)) return true;
+  server.requestAuthentication(BASIC_AUTH, "KAC");
+  return false;
+}
+
+static void einstellungenZeigen() {
+  if (angemeldet()) einstellungenSeite("");
+}
+
+static void einstellungenSpeichern() {
+  if (!angemeldet()) return;
+  zeitplanSetzen(server.arg("ht").toInt(), server.arg("hn").toInt(), server.arg("nv").toInt(), server.arg("nb").toInt());
+  zeitzoneSetzen(server.arg("tz").c_str());
+  const String &key = server.arg("key");
+  bool neuerKey = key.length() && key != cfg.token && schluesselGueltig(key.c_str());
+  if (neuerKey) {
+    strlcpy(cfg.token, key.c_str(), sizeof(cfg.token));
+    speichern();
+    updater.updateCredentials("admin", cfg.token);
+  }
+  einstellungenSeite(neuerKey ? "Saved. The device key has changed: log in again with the new key and update your dashboard."
+                              : "Saved.");
+}
+
 static void einrichtungSeite() {
   int n = WiFi.scanNetworks();
   String h = F("<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width'>"
@@ -628,6 +688,8 @@ static void normalStarten() {
   server.on("/api/seiten", HTTP_POST, apiSeiten);
   server.on("/api/status", HTTP_GET, apiStatus);
   server.on("/api/schluessel", HTTP_POST, apiSchluessel);
+  server.on("/", HTTP_GET, einstellungenZeigen);
+  server.on("/einstellungen", HTTP_POST, einstellungenSpeichern);
   schluesselSicherstellen();
   updater.setup(&server, "/update", "admin", cfg.token);
   server.begin();
