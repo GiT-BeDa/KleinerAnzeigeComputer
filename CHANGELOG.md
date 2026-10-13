@@ -2,6 +2,9 @@
 
 All versions run on the GeekMagic SmallTV Ultra (ESP8266, ST7789 240×240). Images are in [`firmware/`](firmware/).
 
+## 0.7.2 – 2026-10-14
+- Device page reordered: Wi-Fi, signal, IP, key first, then firmware, clock, uptime, data.
+
 ## 0.7.1 – 2026-10-14
 - The built-in Device page always shows the device key, so a forgotten key can be read on the display
   (previously only until the first data arrived).

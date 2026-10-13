@@ -114,8 +114,8 @@ never triggers setup.
 - **Status dot (red)** next to the clock: no Wi-Fi, or no new data for 3 minutes.
 - **Built-in pages** without dashboard data: until the first data arrives, and again after 10 minutes without
   data, the device rotates two pages of its own instead of stale values:
-  - **Device**: version and chip ID, IP address, Wi-Fi, signal (dBm, red below −85), clock sync, uptime, time
-    since the last data and the **device key** (always, so a forgotten key can be read here).
+  - **Device**: Wi-Fi, signal (dBm, red below −85), IP address, the **device key** (always, so a forgotten key
+    can be read here), firmware version and chip ID, clock sync, uptime and time since the last data.
   - **Guide**: a QR code to the build guide at https://www.bk99.de/blog/2026/kac/ (German, English version linked).
 - The date format is DD/MM/YYYY.
 
@@ -194,13 +194,13 @@ same result; the image contains no secret, every device creates its own key.
 ### 4.1 Flash the ready-made image (no compiler needed)
 
 1. Download the latest image from [`firmware/`](firmware/), e.g.
-   [kac-0.7.1.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.7.1.bin), and check its MD5
-   (`dde632e8ca0b1f97dc2a5627633ba1ca` for 0.7.1, all values in [`firmware/README.md`](firmware/README.md)).
+   [kac-0.7.2.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.7.2.bin), and check its MD5
+   (`312c730c86f6e23beb872585fa71df4d` for 0.7.2, all values in [`firmware/README.md`](firmware/README.md)).
 2. Find the device's address in your router (the factory firmware also shows it on the display) and open
    `http://<device>/update`.
 3. Choose the file in the **firmware** field (not "filesystem") and click **Update**, or use curl:
    ```sh
-   curl -F "firmware=@kac-0.7.1.bin" http://<device>/update
+   curl -F "firmware=@kac-0.7.2.bin" http://<device>/update
    # → "Update Success! Rebooting..."
    ```
 4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the

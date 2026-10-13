@@ -354,17 +354,19 @@ static void standardSeite(Seite &s, int art) {
   snprintf(chip, sizeof(chip), "%06x", ESP.getChipId());
   if (art == SEITE_DEVICE) {
     strlcpy(s.titel, "Device", sizeof(s.titel));
-    zeile(s.z[0], 'h', "KAC " KAC_VERSION, chip);
-    zeile(s.z[1], 'k', "IP", ip);
-    zeile(s.z[2], 'k', "Wi-Fi", online ? cfg.ssid : "connecting ...", 0, !online);
-    zeile(s.z[3], 'k', "Signal", rssiText, 0, online && rssi < -85);   // red when very weak
-    zeile(s.z[4], 'k', "Clock", time(nullptr) > 1700000000 ? "NTP ok" : "not synced", 0, time(nullptr) <= 1700000000);
+    // order (owner's wish): network first, then what is needed to reach the device, then the rest
+    zeile(s.z[0], 'k', "Wi-Fi", online ? cfg.ssid : "connecting ...", 0, !online);
+    zeile(s.z[1], 'k', "Signal", rssiText, 0, online && rssi < -85);   // red when very weak
+    zeile(s.z[2], 'k', "IP", ip);
+    zeile(s.z[3], 'k', "Key", cfg.token);   // always: whoever forgot the key reads it here (owner's wish)
+    snprintf(buf, sizeof(buf), "%s / %s", KAC_VERSION, chip);
+    zeile(s.z[4], 'k', "Firmware", buf);
+    zeile(s.z[5], 'k', "Clock", time(nullptr) > 1700000000 ? "NTP ok" : "not synced", 0, time(nullptr) <= 1700000000);
     dauerText(buf, sizeof(buf), millis() / 1000);
-    zeile(s.z[5], 'k', "Uptime", buf);
+    zeile(s.z[6], 'k', "Uptime", buf);
     if (!datenDa) strlcpy(buf, "none yet", sizeof(buf));
     else { dauerText(buf, sizeof(buf), (millis() - letzteDaten) / 1000); strlcat(buf, " ago", sizeof(buf)); }
-    zeile(s.z[6], 'k', "Data", buf, 0, datenDa);
-    zeile(s.z[7], 'k', "Key", cfg.token);   // always: whoever forgot the key reads it here (owner's wish)
+    zeile(s.z[7], 'k', "Data", buf, 0, datenDa);
   } else {
     strlcpy(s.titel, "Guide", sizeof(s.titel));   // only the QR code: everything else is on "Device"
     for (int i = 0; i < ZEILEN; i++) s.z[i].typ = 'q';   // area of the QR code, not drawn as rows
