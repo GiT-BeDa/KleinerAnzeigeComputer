@@ -50,7 +50,7 @@ on bk99.de ([German version](https://www.bk99.de/blog/2026/kac/)). The device's 
 | Clock and date | Set by the device itself via NTP; time zone configurable (default Europe/Berlin). |
 | Protected | Data and firmware updates require a per-device key, created by the device itself. |
 | Ready-made image | Download, upload via the factory update page, done – or build it yourself. |
-| Settings page | `http://<device>/` (user `admin`, password = device key): status, brightness schedule, time zone, key, firmware update |
+| Settings page | `http://<device>/` (user `admin`, password = device key): status, brightness, time zone, clock and date format, NTP, page rotation, Wi-Fi, key, restart, factory reset |
 | Over-the-air updates | `http://<device>/update` |
 
 The API field names are German (`seiten` = pages, `z` = rows, …); they are explained in [chapter 6](#6-api).
@@ -194,13 +194,13 @@ same result; the image contains no secret, every device creates its own key.
 ### 4.1 Flash the ready-made image (no compiler needed)
 
 1. Download the latest image from [`firmware/`](firmware/), e.g.
-   [kac-0.5.2.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.5.2.bin), and check its MD5
-   (`4b78b5bc62764a312fa9580807b41947` for 0.5.2, all values in [`firmware/README.md`](firmware/README.md)).
+   [kac-0.7.0.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.7.0.bin), and check its MD5
+   (`9fc186a25a06952ce04fcfee9ba552c5` for 0.7.0, all values in [`firmware/README.md`](firmware/README.md)).
 2. Find the device's address in your router (the factory firmware also shows it on the display) and open
    `http://<device>/update`.
 3. Choose the file in the **firmware** field (not "filesystem") and click **Update**, or use curl:
    ```sh
-   curl -F "firmware=@kac-0.5.2.bin" http://<device>/update
+   curl -F "firmware=@kac-0.7.0.bin" http://<device>/update
    # → "Update Success! Rebooting..."
    ```
 4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the
@@ -309,10 +309,19 @@ data API and the firmware update.
 
 ### `GET /` – settings page
 
-Web page for people (HTTP Basic auth: user `admin`, password = device key): status line (name, version, IP,
-signal, uptime, data age) and the settings brightness by day/at night with night hours, time zone and device
-key. Saving applies at once without a restart and writes only what changed. Wi-Fi is only changed on the setup
-page (chapter 5), so that a typo cannot take the device off the network.
+Web page for people (HTTP Basic auth: user `admin`, password = device key). Sections:
+
+| Section | Settings |
+|---|---|
+| Status | device name, firmware, address, Wi-Fi and signal, uptime, data age, free RAM |
+| Brightness | day and night sliders, "Dim at night" with night hours |
+| Time zone | 20 common zones or a custom POSIX TZ string |
+| Clock and pages | 12-hour clock, date format, own NTP server, seconds per page (a dashboard may override it) |
+| Wi-Fi | network (with "search networks") and password; a new network is tried first, the device returns to the old one if it cannot connect within 20 s |
+| Device key | change the key |
+| Maintenance | restart, factory reset (erases Wi-Fi, key and settings, then setup starts), firmware update |
+
+Saving applies at once without a restart and writes to flash only what changed.
 
 ### `GET|POST /update`
 

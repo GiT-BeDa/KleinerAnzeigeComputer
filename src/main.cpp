@@ -107,11 +107,20 @@ struct Speicher {          // EEPROM (one flash sector), survives restarts and f
   uint8_t schonDaten;      // DATEN_MARKE once data has ever arrived; until then the info page shows the key
   uint8_t planMarke;       // PLAN_MARKE when the brightness schedule below is valid (appended in 0.5.0)
   uint8_t hellTag, hellNacht, nachtVon, nachtBis;   // brightness % by day/night, night hours (local time)
+  uint8_t extraMarke;      // EXTRA_MARKE when the fields below are valid (appended in 0.7.0)
+  uint8_t uhr12;           // 1 = 12-hour clock
+  uint8_t datumFormat;     // index into DATUMSFORMATE
+  uint8_t rotStandard;     // seconds per page unless the dashboard sends "rot"
+  char ntp[40];            // own NTP server, empty = pool.ntp.org
 };
 static Speicher cfg;
 static const uint8_t MAGIC = 0x4B;
 static const uint8_t DATEN_MARKE = 0x5A;
 static const uint8_t PLAN_MARKE = 0xA7;
+static const uint8_t EXTRA_MARKE = 0xC3;
+static const char *const DATUMSFORMATE[][2] = {
+  {"%d/%m/%Y", "DD/MM/YYYY"}, {"%d.%m.%Y", "DD.MM.YYYY"}, {"%Y-%m-%d", "YYYY-MM-DD"}, {"%m/%d/%Y", "MM/DD/YYYY"}};
+static const int DATUMSFORMATE_N = 4;
 static int16_t dashHell = -1;   // brightness sent by the dashboard ("b"); -1 = none
 
 static bool einrichtung = false;
@@ -277,20 +286,26 @@ static void zeileZeichnen(int i, const Zeile &z) {
 }
 
 static void kopfZeichnen(bool erzwingen) {
-  char uhr[8] = "--:--", datum[12] = "", titel[16] = "";
+  char uhr[8] = "--:--", ampm[4] = "", datum[12] = "", titel[16] = "";
   time_t jetzt = time(nullptr);
   if (jetzt > 1700000000) {
     struct tm t;
     localtime_r(&jetzt, &t);
-    strftime(uhr, sizeof(uhr), "%H:%M", &t);
-    strftime(datum, sizeof(datum), "%d/%m/%Y", &t);
+    if (cfg.uhr12) {
+      int h12 = t.tm_hour % 12 ? t.tm_hour % 12 : 12;
+      snprintf(uhr, sizeof(uhr), "%d:%02d", h12, t.tm_min);
+      strlcpy(ampm, t.tm_hour < 12 ? "am" : "pm", sizeof(ampm));
+    } else {
+      strftime(uhr, sizeof(uhr), "%H:%M", &t);
+    }
+    strftime(datum, sizeof(datum), DATUMSFORMATE[cfg.datumFormat < DATUMSFORMATE_N ? cfg.datumFormat : 0][0], &t);
   }
   if (aktSeite >= 0 && aktSeite < seitenAnzahl) strlcpy(titel, seiten[aktSeite].titel, sizeof(titel));
   else strlcpy(titel, eigenerTitel, sizeof(titel));
   bool alt = !datenDa || millis() - letzteDaten > DATEN_ALT_MS;
   bool offline = WiFi.status() != WL_CONNECTED;
   char sig[64];
-  snprintf(sig, sizeof(sig), "%s|%s|%s|%d|%d", uhr, datum, titel, alt, offline);
+  snprintf(sig, sizeof(sig), "%s%s|%s|%s|%d|%d", uhr, ampm, datum, titel, alt, offline);
   if (!erzwingen && !strcmp(sig, kopfAlt)) return;
   strlcpy(kopfAlt, sig, sizeof(kopfAlt));
 
@@ -299,8 +314,10 @@ static void kopfZeichnen(bool erzwingen) {
   spr.setTextColor(C_TEXT);
   spr.setTextDatum(ML_DATUM);
   spr.drawString(uhr, 4, KOPF_H / 2 + 1);
-  if (offline || alt) spr.fillCircle(spr.textWidth(uhr) + 12, KOPF_H / 2, 4, C_ALERT);
+  int x = 4 + spr.textWidth(uhr);
   spr.setFreeFont(&FreeSans9pt7b);
+  if (ampm[0]) { spr.drawString(ampm, x + 3, KOPF_H / 2 + 5); x += 3 + spr.textWidth(ampm); }
+  if (offline || alt) spr.fillCircle(x + 8, KOPF_H / 2, 4, C_ALERT);
   textRechts(datum, RAND_R, 9, C_TEXT);
   textRechts(titel, RAND_R, 26, C_ACCENT);
   spr.pushSprite(0, 0, 0, 0, 240, KOPF_H);
@@ -512,45 +529,127 @@ static String htmlEsc(const String &s) {
   return o;
 }
 
-// ---------------------------------------------------------------- Web: settings in normal operation
-// http://<device>/ with HTTP Basic auth (admin / device key): status and settings that do not risk the
-// connection (brightness schedule, time zone, device key). Wi-Fi stays on the setup page.
-static void einstellungenSeite(const char *meldung) {
-  char status[200], alter[24];
-  if (!datenDa) strlcpy(alter, "none yet", sizeof(alter));
-  else { dauerText(alter, sizeof(alter), (millis() - letzteDaten) / 1000); strlcat(alter, " ago", sizeof(alter)); }
-  char lauf[24];
-  dauerText(lauf, sizeof(lauf), millis() / 1000);
-  snprintf(status, sizeof(status), "%s &middot; KAC %s &middot; %s &middot; %d dBm &middot; up %s &middot; data %s",
-           geraeteName, KAC_VERSION, WiFi.localIP().toString().c_str(), WiFi.RSSI(), lauf, alter);
-  String h = F("<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-               "<title>KAC</title><style>body{font-family:sans-serif;max-width:460px;margin:1em auto;padding:0 1em}"
-               "input,button{padding:.5em;margin:.3em 0;font-size:1em;box-sizing:border-box}label{display:block;margin-top:.8em}"
-               ".w{width:100%}.q{width:23%}.m{color:#080}</style></head><body><h2>KAC – KleinerAnzeigeComputer</h2>");
-  h += "<p><small>" + String(status) + "</small></p>";
-  if (meldung[0]) h += "<p class=m>" + String(meldung) + "</p>";
-  h += "<form method=post action=/einstellungen>"
-       "<label>Brightness by day / at night in %, night from / to (hour, local time)</label>"
-       "<input class=q name=ht type=number min=0 max=100 value=" + String(cfg.hellTag) + "> "
-       "<input class=q name=hn type=number min=0 max=100 value=" + String(cfg.hellNacht) + "> "
-       "<input class=q name=nv type=number min=0 max=23 value=" + String(cfg.nachtVon) + "> "
-       "<input class=q name=nb type=number min=0 max=23 value=" + String(cfg.nachtBis) + ">"
-       "<label>Time zone (POSIX TZ, e.g. CET-1CEST,M3.5.0,M10.5.0/3)</label>"
-       "<input class=w name=tz maxlength=47 value=\"" + htmlEsc(cfg.tz) + "\">"
-       "<label>Device key (for the dashboard and as the password here; up to 32 characters, no spaces)</label>"
-       "<input class=w name=key maxlength=32 value=\"" + htmlEsc(cfg.token) + "\">"
-       "<button class=w>Save</button></form>"
-       "<p>Brightness sent by a dashboard (\"b\") overrides the schedule while data is arriving. "
-       "Wi-Fi is changed on the setup page (3 short power cycles).</p>"
-       "<p><a href=/update>Firmware update</a> &middot; <a href=/api/status>Status (JSON)</a> &middot; "
-       "<a href=https://www.bk99.de/en/blog/2026/kac/>Guide</a></p></body></html>";
-  server.send(200, "text/html", h);
+// ---------------------------------------------------------------- Web: shared settings fields
+// Common time zones as POSIX TZ strings; anything else via "Custom".
+static const char *const ZONEN[][2] = {
+  {"Europe/Berlin, Paris, Vienna", "CET-1CEST,M3.5.0,M10.5.0/3"}, {"Europe/London, Lisbon", "GMT0BST,M3.5.0/1,M10.5.0"},
+  {"Europe/Helsinki, Athens", "EET-2EEST,M3.5.0/3,M10.5.0/4"}, {"Europe/Moscow", "MSK-3"}, {"UTC", "UTC0"},
+  {"America/New_York", "EST5EDT,M3.2.0,M11.1.0"}, {"America/Chicago", "CST6CDT,M3.2.0,M11.1.0"},
+  {"America/Denver", "MST7MDT,M3.2.0,M11.1.0"}, {"America/Phoenix", "MST7"}, {"America/Los_Angeles", "PST8PDT,M3.2.0,M11.1.0"},
+  {"America/Anchorage", "AKST9AKDT,M3.2.0,M11.1.0"}, {"Pacific/Honolulu", "HST10"}, {"America/Sao_Paulo", "<-03>3"},
+  {"Asia/Dubai", "<+04>-4"}, {"Asia/Kolkata", "IST-5:30"}, {"Asia/Shanghai, Singapore", "CST-8"}, {"Asia/Tokyo", "JST-9"},
+  {"Australia/Sydney", "AEST-10AEDT,M10.1.0,M4.1.0/3"}, {"Australia/Perth", "AWST-8"}, {"Pacific/Auckland", "NZST-12NZDT,M9.5.0,M4.1.0/3"},
+};
+
+static String stundenAuswahl(const char *name, uint8_t wert) {
+  String h = String("<select name=") + name + " style='width:45%'>";
+  for (int i = 0; i < 24; i++) {
+    char s[8];
+    snprintf(s, sizeof(s), "%02d:00", i);
+    h += String("<option value=") + i + (i == wert ? " selected" : "") + ">" + s + "</option>";
+  }
+  return h + "</select>";
 }
+
+static String regler(const char *name, uint8_t wert) {
+  return String("<input type=range name=") + name + " min=0 max=100 step=5 value=" + wert +
+         " style='width:75%' oninput=\"this.nextElementSibling.textContent=this.value+' %'\"> <b>" + wert + " %</b>";
+}
+
+static String einstellFelder() {   // brightness schedule and time zone (setup page and settings page)
+  bool nachtAn = cfg.nachtVon != cfg.nachtBis;
+  String h = "<fieldset><legend>Brightness</legend><label>Day</label>" + regler("ht", cfg.hellTag) +
+             "<label><input type=checkbox name=nachtan value=1 style='width:auto'" + (nachtAn ? " checked" : "") +
+             " onchange=\"document.getElementById('nz').style.display=this.checked?'block':'none'\"> Dim at night</label>"
+             "<div id=nz style='display:" + (nachtAn ? "block" : "none") + "'><label>Night</label>" + regler("hn", cfg.hellNacht) +
+             "<label>from &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; until</label>" +
+             stundenAuswahl("nv", nachtAn ? cfg.nachtVon : 23) + " " + stundenAuswahl("nb", nachtAn ? cfg.nachtBis : 7) +
+             "</div></fieldset><fieldset><legend>Time zone</legend><select name=tzs style='width:100%' "
+             "onchange=\"document.getElementById('tzc').style.display=this.value=='c'?'block':'none'\">";
+  bool bekannt = false;
+  for (auto &z : ZONEN) {
+    bool sel = strcmp(z[1], cfg.tz) == 0;
+    bekannt |= sel;
+    h += String("<option value=\"") + z[1] + "\"" + (sel ? " selected" : "") + ">" + z[0] + "</option>";
+  }
+  h += String("<option value=c") + (bekannt ? "" : " selected") + ">Custom (POSIX TZ string)</option></select>"
+       "<input id=tzc name=tzc maxlength=47 style='width:100%;display:" + (bekannt ? "none" : "block") +
+       "' value=\"" + htmlEsc(cfg.tz) + "\"></fieldset>";
+  return h;
+}
+
+static void einstellFelderUebernehmen() {   // counterpart of einstellFelder(); writes only what changed
+  if (server.hasArg("ht")) {
+    int tag = server.arg("ht").toInt(), nacht = server.arg("hn").toInt();
+    int von = server.arg("nv").toInt(), bis = server.arg("nb").toInt();
+    if (!server.hasArg("nachtan")) { von = 0; bis = 0; }   // equal hours = no night
+    zeitplanSetzen(tag, nacht, von, bis);
+  }
+  if (server.hasArg("tzs")) zeitzoneSetzen(server.arg("tzs") == "c" ? server.arg("tzc").c_str() : server.arg("tzs").c_str());
+}
+
+// ---------------------------------------------------------------- Web: settings in normal operation
+// http://<device>/ with HTTP Basic auth (admin / device key): status and all settings. The page is sent in
+// chunks to keep the RAM use low.
+static char wlanNeuSsid[33], wlanNeuPass[65];
+static uint32_t wlanWechselAb = 0;   // millis() at which the Wi-Fi change is tried (0 = none)
 
 static bool angemeldet() {
   if (server.authenticate("admin", cfg.token)) return true;
   server.requestAuthentication(BASIC_AUTH, "KAC");
   return false;
+}
+
+static void einstellungenSeite(const String &meldung) {
+  char alter[24], lauf[24];
+  if (!datenDa) strlcpy(alter, "none yet", sizeof(alter));
+  else { dauerText(alter, sizeof(alter), (millis() - letzteDaten) / 1000); strlcat(alter, " ago", sizeof(alter)); }
+  dauerText(lauf, sizeof(lauf), millis() / 1000);
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
+  server.sendContent(F("<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+    "<title>KAC</title><style>body{font-family:sans-serif;max-width:480px;margin:1em auto;padding:0 1em}"
+    "input,select,button{padding:.5em;margin:.3em 0;font-size:1em;box-sizing:border-box}label{display:block;margin-top:.6em}"
+    ".w{width:100%}.m{color:#080;font-weight:bold}fieldset{margin:.8em 0;border:1px solid #ccc}td{padding:.1em .6em .1em 0}"
+    "</style></head><body><h2>KAC – KleinerAnzeigeComputer</h2>"));
+  if (meldung.length()) server.sendContent("<p class=m>" + meldung + "</p>");
+  server.sendContent(String("<fieldset><legend>Status</legend><table>") +
+    "<tr><td>Device</td><td>" + geraeteName + "</td></tr><tr><td>Firmware</td><td>KAC " KAC_VERSION "</td></tr>" +
+    "<tr><td>Address</td><td>" + WiFi.localIP().toString() + "</td></tr><tr><td>Wi-Fi</td><td>" + htmlEsc(cfg.ssid) +
+    ", " + WiFi.RSSI() + " dBm</td></tr><tr><td>Uptime</td><td>" + lauf + "</td></tr><tr><td>Data</td><td>" + alter +
+    "</td></tr><tr><td>Free RAM</td><td>" + ESP.getFreeHeap() / 1024 + " KB</td></tr></table></fieldset>");
+  server.sendContent("<form method=post action=/einstellungen>" + einstellFelder());
+  // clock and display
+  String h = "<fieldset><legend>Clock and pages</legend><label><input type=checkbox name=uhr12 value=1 style='width:auto'" +
+             String(cfg.uhr12 ? " checked" : "") + "> 12-hour clock (am/pm)</label><label>Date format</label><select name=df class=w>";
+  for (int i = 0; i < DATUMSFORMATE_N; i++)
+    h += String("<option value=") + i + (i == cfg.datumFormat ? " selected" : "") + ">" + DATUMSFORMATE[i][1] + "</option>";
+  h += "</select><label>NTP server (empty: pool.ntp.org)</label><input class=w name=ntp maxlength=39 value=\"" + htmlEsc(cfg.ntp) +
+       "\"><label>Seconds per page (a dashboard may override it)</label><input name=rot type=number min=5 max=255 value=" +
+       String(cfg.rotStandard) + " style='width:40%'></fieldset>";
+  server.sendContent(h);
+  // Wi-Fi
+  h = "<fieldset><legend>Wi-Fi</legend><label>Network</label><input class=w name=ssid list=netze maxlength=32 value=\"" +
+      htmlEsc(cfg.ssid) + "\"><datalist id=netze>";
+  if (server.hasArg("scan")) {
+    int n = WiFi.scanNetworks();
+    for (int i = 0; i < n; i++) h += "<option value=\"" + htmlEsc(WiFi.SSID(i)) + "\">" + WiFi.RSSI(i) + " dBm</option>";
+  }
+  h += String("</datalist><a href=/?scan=1>search networks</a><label>Password (empty: keep the stored one for the same network)</label>"
+       "<input class=w name=pass type=password maxlength=64><small>A new network is tried first; if the device cannot "
+       "connect within 20 s, it goes back to the current one.</small></fieldset>");
+  server.sendContent(h);
+  server.sendContent("<fieldset><legend>Device key</legend><small>For the dashboard and as the password of this page; up to 32 "
+    "characters, no spaces</small><input class=w name=key maxlength=32 value=\"" + htmlEsc(cfg.token) + "\"></fieldset>"
+    "<button class=w>Save</button></form>");
+  server.sendContent(F("<fieldset><legend>Maintenance</legend>"
+    "<form method=post action=/neustart style='display:inline'><button>Restart</button></form> "
+    "<form method=post action=/werkseinstellungen style='display:inline' onsubmit=\"return confirm('Erase Wi-Fi, key and all "
+    "settings? The device then starts the setup.')\"><button>Factory reset</button></form>"
+    "<p><a href=/update>Firmware update</a> &middot; <a href=/api/status>Status (JSON)</a> &middot; "
+    "<a href=https://www.bk99.de/en/blog/2026/kac/>Guide</a> &middot; "
+    "<a href=https://github.com/GiT-BeDa/KleinerAnzeigeComputer>GitHub</a></p></fieldset></body></html>"));
+  server.sendContent("");
 }
 
 static void einstellungenZeigen() {
@@ -559,24 +658,84 @@ static void einstellungenZeigen() {
 
 static void einstellungenSpeichern() {
   if (!angemeldet()) return;
-  zeitplanSetzen(server.arg("ht").toInt(), server.arg("hn").toInt(), server.arg("nv").toInt(), server.arg("nb").toInt());
-  zeitzoneSetzen(server.arg("tz").c_str());
+  einstellFelderUebernehmen();
+  // clock and pages: write only if something changed
+  uint8_t uhr12 = server.hasArg("uhr12"), df = constrain(server.arg("df").toInt(), 0, DATUMSFORMATE_N - 1);
+  uint8_t rot = constrain(server.arg("rot").toInt(), 5, 255);
+  String ntp = server.arg("ntp");
+  ntp.trim();
+  if (ntp.length() && !tzGueltig(ntp.c_str(), sizeof(cfg.ntp))) ntp = cfg.ntp;
+  if (uhr12 != cfg.uhr12 || df != cfg.datumFormat || rot != cfg.rotStandard || ntp != cfg.ntp) {
+    bool ntpNeu = ntp != cfg.ntp;
+    cfg.uhr12 = uhr12; cfg.datumFormat = df; cfg.rotStandard = rot;
+    strlcpy(cfg.ntp, ntp.c_str(), sizeof(cfg.ntp));
+    rotS = rot;
+    speichern();
+    if (ntpNeu) configTime(cfg.tz, cfg.ntp[0] ? cfg.ntp : "pool.ntp.org", "time.cloudflare.com");
+  }
+  String meldung = "Saved.";
   const String &key = server.arg("key");
-  bool neuerKey = key.length() && key != cfg.token && schluesselGueltig(key.c_str());
-  if (neuerKey) {
+  if (key.length() && key != cfg.token && schluesselGueltig(key.c_str())) {
     strlcpy(cfg.token, key.c_str(), sizeof(cfg.token));
     speichern();
     updater.updateCredentials("admin", cfg.token);
+    meldung += " The device key has changed: log in again with the new key and update your dashboard.";
   }
-  einstellungenSeite(neuerKey ? "Saved. The device key has changed: log in again with the new key and update your dashboard."
-                              : "Saved.");
+  String ssid = server.arg("ssid"), pass = server.arg("pass");
+  ssid.trim();
+  if (ssid.length() && ssid.length() <= 32 && pass.length() <= 64 && (ssid != cfg.ssid || pass.length())) {
+    strlcpy(wlanNeuSsid, ssid.c_str(), sizeof(wlanNeuSsid));
+    strlcpy(wlanNeuPass, pass.length() || ssid != cfg.ssid ? pass.c_str() : cfg.pass, sizeof(wlanNeuPass));
+    wlanWechselAb = millis() + 2000;   // after this answer has been sent
+    meldung += " Switching to Wi-Fi " + htmlEsc(ssid) + " now. If it fails, the device returns to " + htmlEsc(cfg.ssid) +
+               " within about 30 s. In a new network the address may change: see the Device page on the display.";
+  }
+  einstellungenSeite(meldung);
+}
+
+static void wlanWechselPruefen() {   // from loop(): try the new Wi-Fi, keep it only if it connects
+  if (!wlanWechselAb || (int32_t)(millis() - wlanWechselAb) < 0) return;
+  wlanWechselAb = 0;
+  WiFi.disconnect();
+  WiFi.begin(wlanNeuSsid, wlanNeuPass);
+  uint32_t t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) delay(200);
+  if (WiFi.status() == WL_CONNECTED) {
+    strlcpy(cfg.ssid, wlanNeuSsid, sizeof(cfg.ssid));
+    strlcpy(cfg.pass, wlanNeuPass, sizeof(cfg.pass));
+    speichern();
+  } else {
+    WiFi.disconnect();
+    WiFi.begin(cfg.ssid, cfg.pass);   // back to the old network
+  }
+  memset(wlanNeuPass, 0, sizeof(wlanNeuPass));
+}
+
+static void neustart() {
+  if (!angemeldet()) return;
+  server.send(200, "text/html", "<!doctype html><meta charset=utf-8><p>Restarting ... <a href=/>back</a> in about 20 s.</p>");
+  delay(500);
+  ESP.restart();
+}
+
+static void werkseinstellungen() {
+  if (!angemeldet()) return;
+  server.send(200, "text/html", "<!doctype html><meta charset=utf-8><p>Erased. The device restarts and shows the setup screen.</p>");
+  delay(500);
+  memset(&cfg, 0, sizeof(cfg));   // magic 0: defaults, no Wi-Fi, new key on the next start
+  speichern();
+  WiFi.persistent(true);
+  WiFi.disconnect(true);           // also forget the Wi-Fi in the SDK settings
+  delay(200);
+  ESP.restart();
 }
 
 static void einrichtungSeite() {
   int n = WiFi.scanNetworks();
   String h = F("<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width'>"
                "<title>KAC</title><style>body{font-family:sans-serif;max-width:420px;margin:1em auto;"
-               "padding:0 1em}input,select,button{width:100%;padding:.5em;margin:.3em 0;font-size:1em}</style></head><body>"
+               "padding:0 1em}input,select,button{width:100%;padding:.5em;margin:.3em 0;font-size:1em;box-sizing:border-box}"
+               "fieldset{margin:.8em 0;border:1px solid #ccc}</style></head><body>"
                "<h2>KAC – KleinerAnzeigeComputer</h2><form method=post action=/speichern><label>Wi-Fi</label><select name=ssid>");
   for (int i = 0; i < n; i++) {
     String s = htmlEsc(WiFi.SSID(i));
@@ -586,13 +745,7 @@ static void einrichtungSeite() {
   h += F("</select><label>or enter the name</label><input name=ssid2 maxlength=32>"
          "<label>Password (empty: keep the stored one for the same network)</label>"
          "<input name=pass type=password maxlength=64>");
-  h += "<label>Brightness by day / at night in % and night from / to (hour, local time)</label>"
-       "<input name=ht type=number min=0 max=100 value=" + String(cfg.hellTag) + " style='width:22%'> "
-       "<input name=hn type=number min=0 max=100 value=" + String(cfg.hellNacht) + " style='width:22%'> "
-       "<input name=nv type=number min=0 max=23 value=" + String(cfg.nachtVon) + " style='width:22%'> "
-       "<input name=nb type=number min=0 max=23 value=" + String(cfg.nachtBis) + " style='width:22%'>";
-  h += "<label>Time zone (POSIX TZ, e.g. CET-1CEST,M3.5.0,M10.5.0/3)</label><input name=tz maxlength=47 value=\"" +
-       htmlEsc(cfg.tz) + "\">";
+  h += einstellFelder();
   h += "<label>Device key: copy it into your dashboard configuration; also the password for firmware updates "
        "(user admin). Up to 32 characters, no spaces; empty keeps the current key</label><input name=key maxlength=32 value=\"" +
        htmlEsc(cfg.token) + "\">";
@@ -612,12 +765,7 @@ static void einrichtungSpeichern() {
   bool gleichesNetz = ssid == cfg.ssid;
   strlcpy(cfg.ssid, ssid.c_str(), sizeof(cfg.ssid));
   if (!(gleichesNetz && pass.length() == 0)) strlcpy(cfg.pass, pass.c_str(), sizeof(cfg.pass));   // empty: keep
-  if (tzGueltig(server.arg("tz").c_str(), sizeof(cfg.tz))) strlcpy(cfg.tz, server.arg("tz").c_str(), sizeof(cfg.tz));
-  if (server.arg("ht").length() && planGueltig(server.arg("ht").toInt(), server.arg("hn").toInt(), server.arg("nv").toInt(), server.arg("nb").toInt())) {
-    cfg.planMarke = PLAN_MARKE;
-    cfg.hellTag = server.arg("ht").toInt(); cfg.hellNacht = server.arg("hn").toInt();
-    cfg.nachtVon = server.arg("nv").toInt(); cfg.nachtBis = server.arg("nb").toInt();
-  }
+  einstellFelderUebernehmen();
   if (schluesselGueltig(server.arg("key").c_str())) strlcpy(cfg.token, server.arg("key").c_str(), sizeof(cfg.token));
   speichern();
   server.send(200, "text/html",
@@ -683,13 +831,15 @@ static void normalStarten() {
   vollbildText(zeilen, 2);
   verbinden(cfg.ssid, cfg.pass, 20000);   // after that the SDK keeps trying (auto-reconnect)
 
-  configTime(cfg.tz, "pool.ntp.org", "time.cloudflare.com");
+  configTime(cfg.tz, cfg.ntp[0] ? cfg.ntp : "pool.ntp.org", "time.cloudflare.com");
   server.collectHeaders("X-Token");
   server.on("/api/seiten", HTTP_POST, apiSeiten);
   server.on("/api/status", HTTP_GET, apiStatus);
   server.on("/api/schluessel", HTTP_POST, apiSchluessel);
   server.on("/", HTTP_GET, einstellungenZeigen);
   server.on("/einstellungen", HTTP_POST, einstellungenSpeichern);
+  server.on("/neustart", HTTP_POST, neustart);
+  server.on("/werkseinstellungen", HTTP_POST, werkseinstellungen);
   schluesselSicherstellen();
   updater.setup(&server, "/update", "admin", cfg.token);
   server.begin();
@@ -728,6 +878,12 @@ void setup() {
     }
   }
   if (!tzGueltig(cfg.tz, sizeof(cfg.tz))) strlcpy(cfg.tz, TZ_STANDARD, sizeof(cfg.tz));   // also after updating from <0.2.3
+  if (cfg.extraMarke != EXTRA_MARKE || cfg.datumFormat >= DATUMSFORMATE_N || cfg.rotStandard < 5 ||
+      !tzGueltig(cfg.ntp, sizeof(cfg.ntp)) && cfg.ntp[0]) {
+    cfg.extraMarke = EXTRA_MARKE;   // defaults (also after updating from <0.7.0)
+    cfg.uhr12 = 0; cfg.datumFormat = 0; cfg.rotStandard = 30; cfg.ntp[0] = 0;
+  }
+  rotS = cfg.rotStandard;
   if (cfg.planMarke != PLAN_MARKE || !planGueltig(cfg.hellTag, cfg.hellNacht, cfg.nachtVon, cfg.nachtBis)) {
     cfg.planMarke = PLAN_MARKE;   // defaults (also after updating from <0.5.0); saved with the boot counter below
     cfg.hellTag = 90; cfg.hellNacht = 10; cfg.nachtVon = 23; cfg.nachtBis = 7;
@@ -755,6 +911,7 @@ void loop() {
     return;
   }
 
+  wlanWechselPruefen();
   static uint32_t zuletzt = 0;
   if (millis() - zuletzt >= 250) {
     zuletzt = millis();
