@@ -345,7 +345,6 @@ static void zeile(Zeile &z, char typ, const char *l, const char *v, uint8_t p = 
 static void standardSeite(Seite &s, int art) {
   memset(&s, 0, sizeof(s));
   bool online = WiFi.status() == WL_CONNECTED;
-  bool zeigeKey = cfg.schonDaten != DATEN_MARKE;   // only until data has arrived once
   int rssi = online ? WiFi.RSSI() : -100;
   char rssiText[12] = "-", ip[16] = "-", chip[8], buf[28];
   if (online) {
@@ -365,8 +364,7 @@ static void standardSeite(Seite &s, int art) {
     if (!datenDa) strlcpy(buf, "none yet", sizeof(buf));
     else { dauerText(buf, sizeof(buf), (millis() - letzteDaten) / 1000); strlcat(buf, " ago", sizeof(buf)); }
     zeile(s.z[6], 'k', "Data", buf, 0, datenDa);
-    if (zeigeKey) zeile(s.z[7], 'k', "Key", cfg.token);
-    else { snprintf(buf, sizeof(buf), "%u KB", ESP.getFreeHeap() / 1024); zeile(s.z[7], 'k', "Free RAM", buf); }
+    zeile(s.z[7], 'k', "Key", cfg.token);   // always: whoever forgot the key reads it here (owner's wish)
   } else {
     strlcpy(s.titel, "Guide", sizeof(s.titel));   // only the QR code: everything else is on "Device"
     for (int i = 0; i < ZEILEN; i++) s.z[i].typ = 'q';   // area of the QR code, not drawn as rows

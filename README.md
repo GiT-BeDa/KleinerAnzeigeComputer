@@ -115,7 +115,7 @@ never triggers setup.
 - **Built-in pages** without dashboard data: until the first data arrives, and again after 10 minutes without
   data, the device rotates two pages of its own instead of stale values:
   - **Device**: version and chip ID, IP address, Wi-Fi, signal (dBm, red below −85), clock sync, uptime, time
-    since the last data and – until data has arrived once – the **device key** (afterwards free RAM).
+    since the last data and the **device key** (always, so a forgotten key can be read here).
   - **Guide**: a QR code to the build guide at https://www.bk99.de/blog/2026/kac/ (German, English version linked).
 - The date format is DD/MM/YYYY.
 
@@ -172,7 +172,7 @@ long as the dashboard keeps sending (up to 10 minutes after the last data).
 |---|---|
 | Wi-Fi in normal operation | client only, no access point |
 | Setup Wi-Fi | only after the power-cycle gesture or if no Wi-Fi is stored; WPA2 with a 10-character random password shown only on the display; ends after 15 minutes |
-| Device key | created randomly by each device on first start, stored in flash; shown on the setup screen, on the setup page (where you can set your own, 1–32 printable characters) and on the Device page until the first data has arrived; changeable via `POST /api/schluessel` with the current key |
+| Device key | created randomly by each device on first start, stored in flash; shown on the setup screen, on the setup page (where you can set your own, 1–32 printable characters) and on the built-in Device page; changeable via `POST /api/schluessel` with the current key |
 | Sending data | header `X-Token` with the device key, otherwise `403` |
 | Firmware update | HTTP Basic auth `admin` / device key, otherwise `401` |
 | `GET /api/status` | no authentication, contains no secrets |
@@ -194,13 +194,13 @@ same result; the image contains no secret, every device creates its own key.
 ### 4.1 Flash the ready-made image (no compiler needed)
 
 1. Download the latest image from [`firmware/`](firmware/), e.g.
-   [kac-0.7.0.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.7.0.bin), and check its MD5
-   (`9fc186a25a06952ce04fcfee9ba552c5` for 0.7.0, all values in [`firmware/README.md`](firmware/README.md)).
+   [kac-0.7.1.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.7.1.bin), and check its MD5
+   (`dde632e8ca0b1f97dc2a5627633ba1ca` for 0.7.1, all values in [`firmware/README.md`](firmware/README.md)).
 2. Find the device's address in your router (the factory firmware also shows it on the display) and open
    `http://<device>/update`.
 3. Choose the file in the **firmware** field (not "filesystem") and click **Update**, or use curl:
    ```sh
-   curl -F "firmware=@kac-0.7.0.bin" http://<device>/update
+   curl -F "firmware=@kac-0.7.1.bin" http://<device>/update
    # → "Update Success! Rebooting..."
    ```
 4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the
@@ -231,8 +231,8 @@ See chapter 8. No key is needed for building.
    with the night hours, and your own **device key**
    (1–32 printable characters; empty keeps the current one). **Save**. To change only the time zone or the
    key, leave the Wi-Fi password empty: the stored one is kept for the same network.
-5. The device restarts and connects. The access point is off again. Until the first data arrives, the info
-   page shows the device key once more.
+5. The device restarts and connects. The access point is off again. While no dashboard data arrives, the
+   built-in Device page shows the device key as well.
 
 Without input, setup ends after **15 minutes** with a restart. The setup page also offers the firmware update as
 a rescue path in case of broken firmware.

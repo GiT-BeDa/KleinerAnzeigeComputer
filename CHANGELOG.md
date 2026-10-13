@@ -2,6 +2,10 @@
 
 All versions run on the GeekMagic SmallTV Ultra (ESP8266, ST7789 240×240). Images are in [`firmware/`](firmware/).
 
+## 0.7.1 – 2026-10-14
+- The built-in Device page always shows the device key, so a forgotten key can be read on the display
+  (previously only until the first data arrived).
+
 ## 0.7.0 – 2026-10-14
 - Settings page `http://<device>/` covers everything: status, brightness schedule, time zone, 12-hour clock,
   date format (DD/MM/YYYY, DD.MM.YYYY, YYYY-MM-DD, MM/DD/YYYY), own NTP server, seconds per page, Wi-Fi with
