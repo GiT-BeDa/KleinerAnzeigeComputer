@@ -10,7 +10,7 @@ On the network each device calls itself `KleinerAnzeigeComputer-<chip ID>` (host
 `KAC-<chip ID>`. The chip ID is the last three bytes of the MAC address.
 
 **The story behind it, with photos:** [KAC: A small cube becomes a status display for network, firewall and NAS](https://www.bk99.de/en/blog/2026/kac/)
-on bk99.de ([German version](https://www.bk99.de/blog/2026/kac/)). The info page of the device links there via QR code.
+on bk99.de ([German version](https://www.bk99.de/blog/2026/kac/)). The device's built-in guide page links there via QR code.
 
 <p align="center"><img src="docs/images/two-devices.jpg" width="600" alt="Two SmallTV Ultra running KAC: a test page and the NAS page"></p>
 
@@ -86,7 +86,7 @@ Power on
    │      ESP8266 system area, if there is one)
    │
    └─ normal operation
-         ├─ no device key yet? create a random one (16 characters) and store it
+         ├─ no device key yet? create a random one (8 characters) and store it
          ├─ access point permanently off (also in the ESP8266 system settings)
          ├─ connect to the stored Wi-Fi, then reconnect automatically
          ├─ time via NTP (pool.ntp.org, time.cloudflare.com)
@@ -111,15 +111,18 @@ never triggers setup.
 ```
 
 - **Status dot (red)** next to the clock: no Wi-Fi, or no new data for 3 minutes.
-- Until the first data arrives, the device shows an **info page**: version, IP address, Wi-Fi network and
-  signal strength, plus a **QR code** to the build guide at https://www.bk99.de/blog/2026/kac/ (German).
+- **Built-in pages** without dashboard data: until the first data arrives, and again after 10 minutes without
+  data, the device rotates two pages of its own instead of stale values:
+  - **Device**: version and chip ID, IP address, Wi-Fi, signal (dBm, red below −85), clock sync, uptime, time
+    since the last data and – until data has arrived once – the **device key** (afterwards free RAM).
+  - **Guide**: a QR code to the build guide at https://www.bk99.de/blog/2026/kac/ (German, English version linked).
 - The date format is DD/MM/YYYY.
 
-| Info page (no data yet) | Setup screen |
+| Info page (no data yet, version 0.1.x) | Setup screen |
 |---|---|
 | <img src="docs/images/info-page.jpg" width="280" alt="KAC info page: clock, date, version, Wi-Fi, IP address, signal"> | <img src="docs/images/setup-screen.jpg" width="280" alt="KAC setup screen with Wi-Fi name, random password and http://192.168.4.1/"> |
 
-*Photos of early versions (0.1.x): since then the device texts are English, the info page also shows a QR code,
+*Photos of early versions (0.1.x): since then the device texts are English, the info page became the Device and Guide pages,
 the setup Wi-Fi is called `KAC-<chip ID>`, and the empty part of the bars is grey instead of olive.*
 
 ### 3.3 Row types
@@ -165,7 +168,7 @@ example. Until the first data arrives, it is 80.
 |---|---|
 | Wi-Fi in normal operation | client only, no access point |
 | Setup Wi-Fi | only after the power-cycle gesture or if no Wi-Fi is stored; WPA2 with a 10-character random password shown only on the display; ends after 15 minutes |
-| Device key | created randomly by each device on first start, stored in flash; shown on the setup screen, on the setup page (where you can set your own, 1–32 printable characters) and on the info page until the first data has arrived |
+| Device key | created randomly by each device on first start, stored in flash; shown on the setup screen, on the setup page (where you can set your own, 1–32 printable characters) and on the Device page until the first data has arrived; changeable via `POST /api/schluessel` with the current key |
 | Sending data | header `X-Token` with the device key, otherwise `403` |
 | Firmware update | HTTP Basic auth `admin` / device key, otherwise `401` |
 | `GET /api/status` | no authentication, contains no secrets |
@@ -187,13 +190,13 @@ same result; the image contains no secret, every device creates its own key.
 ### 4.1 Flash the ready-made image (no compiler needed)
 
 1. Download the latest image from [`firmware/`](firmware/), e.g.
-   [kac-0.3.3.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.3.3.bin), and check its MD5
-   (`cf0927dbc4e218216e7548fa29a6d861` for 0.3.3, all values in [`firmware/README.md`](firmware/README.md)).
+   [kac-0.4.3.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.4.3.bin), and check its MD5
+   (`48d4c516f89145434a3e26c36211ad10` for 0.4.3, all values in [`firmware/README.md`](firmware/README.md)).
 2. Find the device's address in your router (the factory firmware also shows it on the display) and open
    `http://<device>/update`.
 3. Choose the file in the **firmware** field (not "filesystem") and click **Update**, or use curl:
    ```sh
-   curl -F "firmware=@kac-0.3.3.bin" http://<device>/update
+   curl -F "firmware=@kac-0.4.3.bin" http://<device>/update
    # → "Update Success! Rebooting..."
    ```
 4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the
@@ -286,8 +289,14 @@ Every update **replaces all pages**. Missing rows are empty.
  "seiten":3,"seite":1,"daten_alter_s":4,"zeit":1791838000,"tz":"CET-1CEST,M3.5.0,M10.5.0/3"}
 ```
 
-`daten_alter_s` = seconds since the last update (−1: never), `seite` = page currently shown (−1: info page),
+`daten_alter_s` = seconds since the last update (−1: never), `seite` = page currently shown (−1: built-in Device page, −2: built-in Guide page),
 `zeit` = device time (Unix).
+
+### `POST /api/schluessel`
+
+Changes the device key. Header `X-Token: <current key>`; body `{"key":"<new key>"}` (1–32 printable characters,
+no spaces) or `{}` for a new random key. Answer `{"ok":true,"key":"<new key>"}`; the new key applies at once to the
+data API and the firmware update.
 
 ### `GET|POST /update`
 
@@ -428,7 +437,7 @@ curl -u "admin:<device key>" -F "firmware=@.pio/build/smalltv/firmware.bin" http
 |---|---|
 | Red dot next to the clock | no Wi-Fi or no data for 3 min: check your program and the network, `GET /api/status` |
 | Clock shows `--:--` | no NTP response yet; allow DNS/NTP in the network |
-| Info page stays on screen | no data arrives: program not running, wrong key (`403`) or wrong address |
+| Device/Guide pages instead of your pages | no data for 10 min (or never): program not running, wrong key (`403`) or wrong address |
 | `403` when sending | `X-Token` wrong or missing |
 | Device key forgotten | power-cycle gesture (chapter 5): the setup screen and page show it, and you can set a new one |
 | `400 json` | invalid JSON (e.g. comments included) |

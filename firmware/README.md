@@ -3,14 +3,16 @@
 Built with `pio run` from the commit that added the file, **without** a key: every device creates its own
 key on first start (see the main README, chapter 4).
 
+Older images are in the Git history.
+
 | File | Version | Size | MD5 | SHA-256 |
 |---|---|---|---|---|
-| [kac-0.3.3.bin](kac-0.3.3.bin) | 0.3.3 | 394672 bytes | `cf0927dbc4e218216e7548fa29a6d861` | `c85fff08e65190f01ea6b4070f312db9e013156c7563f3db734857f61359546f` |
+| [kac-0.4.3.bin](kac-0.4.3.bin) | 0.4.3 | 396224 bytes | `48d4c516f89145434a3e26c36211ad10` | `39284cc29c893403969ada794e5f5e9786872abe2d7e4c98d2e08b3e15ab05b0` |
 
 Check the download before uploading it:
 
 ```sh
-md5sum kac-0.3.3.bin        # Linux
-md5 kac-0.3.3.bin           # macOS
-certutil -hashfile kac-0.3.3.bin MD5   # Windows
+md5sum kac-0.4.3.bin        # Linux
+md5 kac-0.4.3.bin           # macOS
+certutil -hashfile kac-0.4.3.bin MD5   # Windows
 ```

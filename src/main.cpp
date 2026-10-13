@@ -95,6 +95,7 @@ static char kopfAlt[64] = "";
 static uint8_t hell = 80, rotS = 30;
 static uint32_t letzteDaten = 0;
 static bool datenDa = false;
+static char eigenerTitel[16] = "Device";   // header title of the built-in pages
 
 struct Speicher {          // EEPROM (one flash sector), survives restarts and firmware updates
   uint8_t magic;
@@ -131,6 +132,12 @@ static bool schluesselGueltig(const char *s) {   // 1..32 printable characters w
   return true;
 }
 
+static void neuerSchluessel() {   // 8 random characters without easily confused ones: 55^8 ≈ 8·10^13
+  const char *zeichen = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  for (int i = 0; i < 8; i++) cfg.token[i] = zeichen[RANDOM_REG32 % strlen(zeichen)];
+  cfg.token[8] = 0;
+}
+
 // Make sure a device key exists. Called after the Wi-Fi radio is on: the ESP8266 random number generator
 // draws on RF noise and is weaker before that.
 static void schluesselSicherstellen() {
@@ -138,9 +145,7 @@ static void schluesselSicherstellen() {
   if (schluesselGueltig(KAC_TOKEN)) {
     strlcpy(cfg.token, KAC_TOKEN, sizeof(cfg.token));      // private build: take over the old built-in key
   } else {
-    const char *zeichen = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-    for (int i = 0; i < 16; i++) cfg.token[i] = zeichen[RANDOM_REG32 % strlen(zeichen)];
-    cfg.token[16] = 0;
+    neuerSchluessel();
   }
   speichern();
 }
@@ -251,7 +256,7 @@ static void kopfZeichnen(bool erzwingen) {
     strftime(datum, sizeof(datum), "%d/%m/%Y", &t);
   }
   if (aktSeite >= 0 && aktSeite < seitenAnzahl) strlcpy(titel, seiten[aktSeite].titel, sizeof(titel));
-  else strlcpy(titel, "Info", sizeof(titel));
+  else strlcpy(titel, eigenerTitel, sizeof(titel));
   bool alt = !datenDa || millis() - letzteDaten > DATEN_ALT_MS;
   bool offline = WiFi.status() != WL_CONNECTED;
   char sig[64];
@@ -271,23 +276,55 @@ static void kopfZeichnen(bool erzwingen) {
   spr.pushSprite(0, 0, 0, 0, 240, KOPF_H);
 }
 
-// Info page until the first data arrives: status in rows 0-1, below it a QR code to the build guide
-static void infoSeite(Seite &s) {
+// Built-in default pages, shown until the first data arrives and again after DATEN_WEG_MS without data:
+// "Device" with everything the device knows about itself, "Guide" with a QR code to the build guide.
+static const uint32_t DATEN_WEG_MS = 10UL * 60 * 1000;
+static const int SEITE_DEVICE = -1, SEITE_GUIDE = -2;
+
+static void dauerText(char *buf, size_t n, uint32_t sek) {
+  if (sek >= 86400) snprintf(buf, n, "%lu d %lu h", (unsigned long)(sek / 86400), (unsigned long)(sek % 86400 / 3600));
+  else if (sek >= 3600) snprintf(buf, n, "%lu h %lu min", (unsigned long)(sek / 3600), (unsigned long)(sek % 3600 / 60));
+  else snprintf(buf, n, "%lu min", (unsigned long)(sek / 60));
+}
+
+static void zeile(Zeile &z, char typ, const char *l, const char *v, uint8_t p = 0, uint8_t a = 0) {
+  z.typ = typ;
+  strlcpy(z.l, l, sizeof(z.l));
+  strlcpy(z.v, v, sizeof(z.v));
+  z.p = p;
+  z.a = a;
+}
+
+static void standardSeite(Seite &s, int art) {
   memset(&s, 0, sizeof(s));
-  strlcpy(s.titel, "no data yet", sizeof(s.titel));
   bool online = WiFi.status() == WL_CONNECTED;
-  s.z[0].typ = 'h';
-  strlcpy(s.z[0].l, "KAC " KAC_VERSION, sizeof(s.z[0].l));
-  strlcpy(s.z[0].v, online ? WiFi.localIP().toString().c_str() : "-", sizeof(s.z[0].v));
-  s.z[1].typ = 'k';
-  if (cfg.schonDaten != DATEN_MARKE) {   // new device: show the key for the dashboard configuration
-    strlcpy(s.z[1].l, "Key", sizeof(s.z[1].l));
-    strlcpy(s.z[1].v, cfg.token, sizeof(s.z[1].v));
-  } else {
-    strlcpy(s.z[1].l, online ? cfg.ssid : "connecting ...", sizeof(s.z[1].l));
-    if (online) snprintf(s.z[1].v, sizeof(s.z[1].v), "%d dBm", (WiFi.RSSI() / 3) * 3);   // 3-dB steps
+  bool zeigeKey = cfg.schonDaten != DATEN_MARKE;   // only until data has arrived once
+  int rssi = online ? WiFi.RSSI() : -100;
+  char rssiText[12] = "-", ip[16] = "-", chip[8], buf[28];
+  if (online) {
+    snprintf(rssiText, sizeof(rssiText), "%d dBm", (rssi / 3) * 3);   // 3-dB steps: fewer redraws
+    strlcpy(ip, WiFi.localIP().toString().c_str(), sizeof(ip));
   }
-  for (int i = 2; i < ZEILEN; i++) s.z[i].typ = 'q';   // area of the QR code, not drawn as rows
+  snprintf(chip, sizeof(chip), "%06x", ESP.getChipId());
+  if (art == SEITE_DEVICE) {
+    strlcpy(s.titel, "Device", sizeof(s.titel));
+    zeile(s.z[0], 'h', "KAC " KAC_VERSION, chip);
+    zeile(s.z[1], 'k', "IP", ip);
+    zeile(s.z[2], 'k', "Wi-Fi", online ? cfg.ssid : "connecting ...", 0, !online);
+    zeile(s.z[3], 'k', "Signal", rssiText, 0, online && rssi < -85);   // red when very weak
+    zeile(s.z[4], 'k', "Clock", time(nullptr) > 1700000000 ? "NTP ok" : "not synced", 0, time(nullptr) <= 1700000000);
+    dauerText(buf, sizeof(buf), millis() / 1000);
+    zeile(s.z[5], 'k', "Uptime", buf);
+    if (!datenDa) strlcpy(buf, "none yet", sizeof(buf));
+    else { dauerText(buf, sizeof(buf), (millis() - letzteDaten) / 1000); strlcat(buf, " ago", sizeof(buf)); }
+    zeile(s.z[6], 'k', "Data", buf, 0, datenDa);
+    if (zeigeKey) zeile(s.z[7], 'k', "Key", cfg.token);
+    else { snprintf(buf, sizeof(buf), "%u KB", ESP.getFreeHeap() / 1024); zeile(s.z[7], 'k', "Free RAM", buf); }
+  } else {
+    strlcpy(s.titel, "Guide", sizeof(s.titel));   // only the QR code: everything else is on "Device"
+    for (int i = 0; i < ZEILEN; i++) s.z[i].typ = 'q';   // area of the QR code, not drawn as rows
+  }
+  strlcpy(eigenerTitel, s.titel, sizeof(eigenerTitel));
 }
 
 static void qrZeichnen() {
@@ -295,8 +332,8 @@ static void qrZeichnen() {
   uint8_t daten[qrcode_getBufferSize(3)];
   qrcode_initText(&qr, daten, 3, ECC_LOW, ANLEITUNG_URL);
   const int m = 4, rand = 2 * m, groesse = qr.size * m + 2 * rand;   // 29 modules → 132 px
-  const int x0 = 4, y0 = ZEILE_Y0 + 2 * ZEILE_H + 4;
-  tft.fillRect(0, ZEILE_Y0 + 2 * ZEILE_H, 240, 240 - ZEILE_Y0 - 2 * ZEILE_H, C_BG);
+  const int x0 = 4, y0 = ZEILE_Y0 + (ZEILEN * ZEILE_H - groesse) / 2;   // vertically centered below the header
+  tft.fillRect(0, ZEILE_Y0, 240, 240 - ZEILE_Y0, C_BG);
   tft.fillRect(x0, y0, groesse, groesse, TFT_WHITE);
   for (uint8_t y = 0; y < qr.size; y++)
     for (uint8_t x = 0; x < qr.size; x++)
@@ -310,22 +347,25 @@ static void qrZeichnen() {
 }
 
 static void anzeigen() {
-  int n = seitenAnzahl;
-  int neu = 0;
+  // dashboard pages, or the built-in pages if nothing ever arrived or nothing came for DATEN_WEG_MS
+  bool standard = seitenAnzahl == 0 || millis() - letzteDaten > DATEN_WEG_MS;
+  int n = standard ? 2 : seitenAnzahl;
+  int index = 0;
   if (n > 1) {
     time_t jetzt = time(nullptr);
     uint32_t sek = jetzt > 1700000000 ? (uint32_t)jetzt : millis() / 1000;
-    neu = (sek / max<uint8_t>(rotS, 5)) % n;
+    index = (sek / max<uint8_t>(rotS, 5)) % n;
   }
-  static Seite info;
+  static Seite eigen;
   const Seite *s;
-  if (n == 0) { infoSeite(info); s = &info; neu = -1; }
-  else s = &seiten[neu];
+  int neu;
+  if (standard) { neu = index == 0 ? SEITE_DEVICE : SEITE_GUIDE; standardSeite(eigen, neu); s = &eigen; }
+  else { neu = index; s = &seiten[index]; }
   if (neu != aktSeite) {
     aktSeite = neu;
     memset(zeileGueltig, 0, sizeof(zeileGueltig));
     kopfZeichnen(true);
-    if (neu == -1) qrZeichnen();
+    if (neu == SEITE_GUIDE) qrZeichnen();
   } else {
     kopfZeichnen(false);
   }
@@ -398,6 +438,23 @@ static void apiSeiten() {
   if (cfg.schonDaten != DATEN_MARKE) { cfg.schonDaten = DATEN_MARKE; speichern(); }   // once per device
   datenDa = true;
   server.send(200, "application/json", String("{\"ok\":true,\"seiten\":") + n + "}");
+}
+
+// Change the device key with the current one: {"key":"<new>"}, or {} for a new random key (returned once).
+static void apiSchluessel() {
+  if (!tokenOk()) return;
+  JsonDocument doc;
+  deserializeJson(doc, server.arg("plain"));
+  const char *neu = doc["key"] | "";
+  if (neu[0]) {
+    if (!schluesselGueltig(neu)) { server.send(400, "application/json", "{\"error\":\"key\"}"); return; }
+    strlcpy(cfg.token, neu, sizeof(cfg.token));
+  } else {
+    neuerSchluessel();
+  }
+  speichern();
+  updater.updateCredentials("admin", cfg.token);
+  server.send(200, "application/json", String("{\"ok\":true,\"key\":\"") + cfg.token + "\"}");
 }
 
 static void apiStatus() {
@@ -525,6 +582,7 @@ static void normalStarten() {
   server.collectHeaders("X-Token");
   server.on("/api/seiten", HTTP_POST, apiSeiten);
   server.on("/api/status", HTTP_GET, apiStatus);
+  server.on("/api/schluessel", HTTP_POST, apiSchluessel);
   schluesselSicherstellen();
   updater.setup(&server, "/update", "admin", cfg.token);
   server.begin();
