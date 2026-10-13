@@ -5,11 +5,15 @@
 // changed – each row is drawn completely in memory (sprite) and then transferred in one piece, so
 // nothing flickers. The device sets the clock in the header itself via NTP.
 //
-// Setup: cut the power 5 times in a row (each run < 10 s) or no Wi-Fi stored → access point
+// Setup: cut the power 3 times in a row (each run < 10 s) or no Wi-Fi stored → access point
 // "KAC-<chip ID>" with a random password shown only on the display; setup page at
 // http://192.168.4.1/. Restarts after 15 min without saving.
 //
-// Firmware update: http://<ip>/update, user admin, password = KAC_TOKEN (set at build time).
+// Device key: protects the data API (header X-Token) and the firmware update (user admin). Each device creates a
+// random key on first start and stores it in flash; the setup page shows it and lets you change it. Images
+// therefore contain no secret and can be published. A private build may set KAC_TOKEN as the initial key.
+//
+// Firmware update: http://<ip>/update, user admin, password = device key.
 //
 // Identifiers are German; see README.md for the API field names. Texts shown on the device are English.
 
@@ -27,9 +31,8 @@ extern "C" {
 }
 
 #ifndef KAC_TOKEN
-#error "KAC_TOKEN missing: set it in the environment when building"
+#define KAC_TOKEN ""        // public build: every device creates its own key
 #endif
-static_assert(sizeof(KAC_TOKEN) > 16, "KAC_TOKEN too short or empty: KAC_TOKEN=<secret> pio run");
 
 // ---------------------------------------------------------------- Settings
 // Host name "KleinerAnzeigeComputer-" + chip ID (last 3 bytes of the MAC); the setup Wi-Fi uses the short
@@ -38,7 +41,7 @@ static char geraeteName[33];
 static char apName[16];
 static const char *TZ_STANDARD = "CET-1CEST,M3.5.0,M10.5.0/3";   // POSIX TZ, default Europe/Berlin
 static const uint8_t PIN_BL = 5;                       // backlight, inverted
-static const uint8_t GESTE_ANZAHL = 5;                  // boots in a row that start setup mode
+static const uint8_t GESTE_ANZAHL = 3;                  // boots in a row that start setup mode
 static const uint32_t GESTE_FENSTER_MS = 10000;         // a boot counts if it runs shorter than this
 static const uint32_t EINRICHTUNG_MAX_MS = 15UL * 60 * 1000;
 static const uint32_t DATEN_ALT_MS = 3UL * 60 * 1000;   // after that: red dot in the header
@@ -99,9 +102,12 @@ struct Speicher {          // EEPROM (one flash sector), survives restarts and f
   char ssid[33];
   char pass[65];
   char tz[48];             // POSIX time zone; appended later, so older settings keep their Wi-Fi data
+  char token[33];          // device key (1-32 characters); appended in 0.3.0
+  uint8_t schonDaten;      // DATEN_MARKE once data has ever arrived; until then the info page shows the key
 };
 static Speicher cfg;
 static const uint8_t MAGIC = 0x4B;
+static const uint8_t DATEN_MARKE = 0x5A;
 
 static bool einrichtung = false;
 static uint32_t einrichtungSeit = 0;
@@ -117,6 +123,27 @@ static bool tzGueltig(const char *s, size_t max) {   // printable ASCII, 3..max-
 }
 
 static void speichern();
+
+static bool schluesselGueltig(const char *s) {   // 1..32 printable characters without space; length is the user's choice
+  size_t n = strnlen(s, 33);
+  if (n < 1 || n > 32) return false;
+  for (size_t i = 0; i < n; i++) if (s[i] < 0x21 || s[i] > 0x7E) return false;
+  return true;
+}
+
+// Make sure a device key exists. Called after the Wi-Fi radio is on: the ESP8266 random number generator
+// draws on RF noise and is weaker before that.
+static void schluesselSicherstellen() {
+  if (schluesselGueltig(cfg.token)) return;
+  if (schluesselGueltig(KAC_TOKEN)) {
+    strlcpy(cfg.token, KAC_TOKEN, sizeof(cfg.token));      // private build: take over the old built-in key
+  } else {
+    const char *zeichen = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+    for (int i = 0; i < 16; i++) cfg.token[i] = zeichen[RANDOM_REG32 % strlen(zeichen)];
+    cfg.token[16] = 0;
+  }
+  speichern();
+}
 
 // Set the time zone; write to flash only if it changed (the dashboard sends it with every update)
 static void zeitzoneSetzen(const char *tz) {
@@ -253,8 +280,13 @@ static void infoSeite(Seite &s) {
   strlcpy(s.z[0].l, "KAC " KAC_VERSION, sizeof(s.z[0].l));
   strlcpy(s.z[0].v, online ? WiFi.localIP().toString().c_str() : "-", sizeof(s.z[0].v));
   s.z[1].typ = 'k';
-  strlcpy(s.z[1].l, online ? cfg.ssid : "connecting ...", sizeof(s.z[1].l));
-  if (online) snprintf(s.z[1].v, sizeof(s.z[1].v), "%d dBm", (WiFi.RSSI() / 3) * 3);   // 3-dB steps
+  if (cfg.schonDaten != DATEN_MARKE) {   // new device: show the key for the dashboard configuration
+    strlcpy(s.z[1].l, "Key", sizeof(s.z[1].l));
+    strlcpy(s.z[1].v, cfg.token, sizeof(s.z[1].v));
+  } else {
+    strlcpy(s.z[1].l, online ? cfg.ssid : "connecting ...", sizeof(s.z[1].l));
+    if (online) snprintf(s.z[1].v, sizeof(s.z[1].v), "%d dBm", (WiFi.RSSI() / 3) * 3);   // 3-dB steps
+  }
   for (int i = 2; i < ZEILEN; i++) s.z[i].typ = 'q';   // area of the QR code, not drawn as rows
 }
 
@@ -320,7 +352,7 @@ static void vollbildText(const char *const zeilen[], int anzahl) {
 
 // ---------------------------------------------------------------- Web: normal operation
 static bool tokenOk() {
-  if (server.header("X-Token") == KAC_TOKEN) return true;
+  if (server.header("X-Token") == cfg.token) return true;
   server.send(403, "application/json", "{\"error\":\"token\"}");
   return false;
 }
@@ -363,6 +395,7 @@ static void apiSeiten() {
   if (doc["rot"].is<int>()) rotS = doc["rot"];
   if (doc["tz"].is<const char *>()) zeitzoneSetzen(doc["tz"]);
   letzteDaten = millis();
+  if (cfg.schonDaten != DATEN_MARKE) { cfg.schonDaten = DATEN_MARKE; speichern(); }   // once per device
   datenDa = true;
   server.send(200, "application/json", String("{\"ok\":true,\"seiten\":") + n + "}");
 }
@@ -403,6 +436,9 @@ static void einrichtungSeite() {
          "<input name=pass type=password maxlength=64>");
   h += "<label>Time zone (POSIX TZ, e.g. CET-1CEST,M3.5.0,M10.5.0/3)</label><input name=tz maxlength=47 value=\"" +
        htmlEsc(cfg.tz) + "\">";
+  h += "<label>Device key: copy it into your dashboard configuration; also the password for firmware updates "
+       "(user admin). Up to 32 characters, no spaces; empty keeps the current key</label><input name=key maxlength=32 value=\"" +
+       htmlEsc(cfg.token) + "\">";
   h += F(
          "<button>Save and restart</button></form>"
          "<p><a href=/update>Firmware update</a> (user admin)</p></body></html>");
@@ -420,6 +456,7 @@ static void einrichtungSpeichern() {
   strlcpy(cfg.ssid, ssid.c_str(), sizeof(cfg.ssid));
   if (!(gleichesNetz && pass.length() == 0)) strlcpy(cfg.pass, pass.c_str(), sizeof(cfg.pass));   // empty: keep
   if (tzGueltig(server.arg("tz").c_str(), sizeof(cfg.tz))) strlcpy(cfg.tz, server.arg("tz").c_str(), sizeof(cfg.tz));
+  if (schluesselGueltig(server.arg("key").c_str())) strlcpy(cfg.token, server.arg("key").c_str(), sizeof(cfg.token));
   speichern();
   server.send(200, "text/html",
               "<!doctype html><meta charset=utf-8><p>Saved. The device restarts and connects to "
@@ -431,23 +468,26 @@ static void einrichtungSpeichern() {
 static void einrichtungStarten() {
   einrichtung = true;
   einrichtungSeit = millis();
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_AP_STA);   // radio on first: the random number generator draws on RF noise
   const char *zeichen = "abcdefghjkmnpqrstuvwxyz23456789";   // no easily confused characters
   for (int i = 0; i < 10; i++) apPass[i] = zeichen[RANDOM_REG32 % strlen(zeichen)];
   apPass[10] = 0;
-  WiFi.persistent(false);
-  WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(apName, apPass);
   server.on("/", HTTP_GET, einrichtungSeite);
   server.on("/speichern", HTTP_POST, einrichtungSpeichern);
-  updater.setup(&server, "/update", "admin", KAC_TOKEN);
+  schluesselSicherstellen();
+  updater.setup(&server, "/update", "admin", cfg.token);
   server.begin();
   char z2[48], z3[48];
   snprintf(z2, sizeof(z2), "Password: %s", apPass);
   snprintf(z3, sizeof(z3), "http://%s/", WiFi.softAPIP().toString().c_str());
   char z1[32];
   snprintf(z1, sizeof(z1), "Wi-Fi: %s", apName);
-  const char *zeilen[] = {"Setup", z1, z2, z3, "", "Ends after 15 min"};
-  vollbildText(zeilen, 6);
+  char z4[48];
+  snprintf(z4, sizeof(z4), "Key: %s", cfg.token);
+  const char *zeilen[] = {"Setup", z1, z2, z3, z4, "", "Ends after 15 min"};
+  vollbildText(zeilen, 7);
   helligkeit(80);
 }
 
@@ -485,7 +525,8 @@ static void normalStarten() {
   server.collectHeaders("X-Token");
   server.on("/api/seiten", HTTP_POST, apiSeiten);
   server.on("/api/status", HTTP_GET, apiStatus);
-  updater.setup(&server, "/update", "admin", KAC_TOKEN);
+  schluesselSicherstellen();
+  updater.setup(&server, "/update", "admin", cfg.token);
   server.begin();
 
   tft.fillScreen(C_BG);
