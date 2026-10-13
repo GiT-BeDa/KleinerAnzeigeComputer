@@ -159,8 +159,11 @@ on the half minute. Your program does not have to control the rotation; it just 
 
 ### 3.6 Brightness
 
-The brightness (0–100) is sent with every update (`b`), so your program can dim the display at night, for
-example. Until the first data arrives, it is 80.
+The device dims itself at night, also without any dashboard: brightness by day and at night and the night
+hours (local time, see the time zone) are settings, by default 90 %, 10 % and 23:00–07:00. Set them on the setup
+page or with the API fields `hell_tag`, `hell_nacht`, `nacht_von`, `nacht_bis`; they are written to flash only when
+they change, so a dashboard can send them with every update. A brightness sent as `b` overrides the schedule as
+long as the dashboard keeps sending (up to 10 minutes after the last data).
 
 ### 3.7 Security
 
@@ -190,13 +193,13 @@ same result; the image contains no secret, every device creates its own key.
 ### 4.1 Flash the ready-made image (no compiler needed)
 
 1. Download the latest image from [`firmware/`](firmware/), e.g.
-   [kac-0.4.3.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.4.3.bin), and check its MD5
-   (`48d4c516f89145434a3e26c36211ad10` for 0.4.3, all values in [`firmware/README.md`](firmware/README.md)).
+   [kac-0.5.0.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.5.0.bin), and check its MD5
+   (`a1796b1dd80d08960d2835a6be20f83e` for 0.5.0, all values in [`firmware/README.md`](firmware/README.md)).
 2. Find the device's address in your router (the factory firmware also shows it on the display) and open
    `http://<device>/update`.
 3. Choose the file in the **firmware** field (not "filesystem") and click **Update**, or use curl:
    ```sh
-   curl -F "firmware=@kac-0.4.3.bin" http://<device>/update
+   curl -F "firmware=@kac-0.5.0.bin" http://<device>/update
    # → "Update Success! Rebooting..."
    ```
 4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the
@@ -223,7 +226,8 @@ See chapter 8. No key is needed for building.
    **device key**.
 3. Connect to this Wi-Fi and open `http://192.168.4.1/`.
 4. Pick your network from the list (or type its name) and enter its password. Optionally set the time zone as
-   a POSIX TZ string (default `CET-1CEST,M3.5.0,M10.5.0/3` = Europe/Berlin) and your own **device key**
+   a POSIX TZ string (default `CET-1CEST,M3.5.0,M10.5.0/3` = Europe/Berlin), the brightness by day/at night
+   with the night hours, and your own **device key**
    (1–32 printable characters; empty keeps the current one). **Save**. To change only the time zone or the
    key, leave the Wi-Fi password empty: the stored one is kept for the same network.
 5. The device restarts and connects. The access point is off again. Until the first data arrives, the info
@@ -243,7 +247,9 @@ a rescue path in case of broken firmware.
 
 ```jsonc
 {
-  "b": 90,                       // brightness 0..100              (optional)
+  "b": 90,                       // brightness 0..100, overrides the schedule   (optional)
+  "hell_tag": 90, "hell_nacht": 10,      // schedule: brightness by day/at night   (optional, stored on change)
+  "nacht_von": 23, "nacht_bis": 7,       //           night hours, local time
   "rot": 30,                     // seconds per page, 5..255        (optional, default 30)
   "tz": "CET-1CEST,M3.5.0,M10.5.0/3",  // POSIX time zone             (optional, stored only when changed)
   "seiten": [                    // pages, 1..3
@@ -264,7 +270,8 @@ a rescue path in case of broken firmware.
 
 | Field | Meaning |
 |---|---|
-| `b` | brightness |
+| `b` | brightness (overrides the schedule) |
+| `hell_tag`, `hell_nacht`, `nacht_von`, `nacht_bis` | brightness schedule: day %, night %, night from/to hour (chapter 3.6) |
 | `rot` | rotation interval |
 | `tz` | time zone (POSIX TZ string) |
 | `seiten` | pages |
@@ -286,7 +293,8 @@ Every update **replaces all pages**. Missing rows are empty.
 
 ```json
 {"name":"KleinerAnzeigeComputer-4670fa","version":"0.2.1","uptime":3600,"ssid":"MyWiFi","rssi":-45,"heap":33800,
- "seiten":3,"seite":1,"daten_alter_s":4,"zeit":1791838000,"tz":"CET-1CEST,M3.5.0,M10.5.0/3"}
+ "seiten":3,"seite":1,"daten_alter_s":4,"zeit":1791838000,"tz":"CET-1CEST,M3.5.0,M10.5.0/3",
+ "hell":10,"hell_tag":90,"hell_nacht":10,"nacht_von":23,"nacht_bis":7}
 ```
 
 `daten_alter_s` = seconds since the last update (−1: never), `seite` = page currently shown (−1: built-in Device page, −2: built-in Guide page),
@@ -406,7 +414,7 @@ Configuration file (`KEY=value`, default `/root/.config/kac/kac.env`, other path
 | `NAS_SSH`, `NAS_KNOWN_HOSTS`, `NAS_DISKS`, `NAS_MOUNT` | NAS via SSH (empty `NAS_SSH`: no NAS page) | `root@nas`, `sda sdb`, `/mnt/data` |
 | `INTERVALL`, `LANGSAM`, `ROT_S` | seconds: fast values, slow values, page rotation | `5`, `60`, `30` |
 | `TZ` | time zone sent to the device (optional) | `EST5EDT,M3.2.0,M11.1.0` |
-| `HELL_TAG`, `HELL_NACHT`, `NACHT_VON`, `NACHT_BIS` | brightness by day/night, night hours | `90`, `10`, `23`, `7` |
+| `HELL_TAG`, `HELL_NACHT`, `NACHT_VON`, `NACHT_BIS` | brightness schedule sent to the device (it dims by itself) | `90`, `10`, `23`, `7` |
 
 Worth noting:
 

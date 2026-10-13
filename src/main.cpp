@@ -105,10 +105,14 @@ struct Speicher {          // EEPROM (one flash sector), survives restarts and f
   char tz[48];             // POSIX time zone; appended later, so older settings keep their Wi-Fi data
   char token[33];          // device key (1-32 characters); appended in 0.3.0
   uint8_t schonDaten;      // DATEN_MARKE once data has ever arrived; until then the info page shows the key
+  uint8_t planMarke;       // PLAN_MARKE when the brightness schedule below is valid (appended in 0.5.0)
+  uint8_t hellTag, hellNacht, nachtVon, nachtBis;   // brightness % by day/night, night hours (local time)
 };
 static Speicher cfg;
 static const uint8_t MAGIC = 0x4B;
 static const uint8_t DATEN_MARKE = 0x5A;
+static const uint8_t PLAN_MARKE = 0xA7;
+static int16_t dashHell = -1;   // brightness sent by the dashboard ("b"); -1 = none
 
 static bool einrichtung = false;
 static uint32_t einrichtungSeit = 0;
@@ -151,6 +155,32 @@ static void schluesselSicherstellen() {
 }
 
 // Set the time zone; write to flash only if it changed (the dashboard sends it with every update)
+// Brightness schedule: day/night brightness and night hours, written to flash only when it changes
+static bool planGueltig(int tag, int nacht, int von, int bis) {
+  return tag >= 0 && tag <= 100 && nacht >= 0 && nacht <= 100 && von >= 0 && von <= 23 && bis >= 0 && bis <= 23;
+}
+
+static void zeitplanSetzen(int tag, int nacht, int von, int bis) {
+  if (!planGueltig(tag, nacht, von, bis)) return;
+  if (cfg.planMarke == PLAN_MARKE && cfg.hellTag == tag && cfg.hellNacht == nacht && cfg.nachtVon == von && cfg.nachtBis == bis)
+    return;
+  cfg.planMarke = PLAN_MARKE;
+  cfg.hellTag = tag; cfg.hellNacht = nacht; cfg.nachtVon = von; cfg.nachtBis = bis;
+  speichern();
+}
+
+// The dashboard's "b" wins while its data is current; otherwise the device follows its own schedule.
+static uint8_t sollHelligkeit() {
+  if (dashHell >= 0 && datenDa && millis() - letzteDaten < 10UL * 60 * 1000) return dashHell;
+  time_t jetzt = time(nullptr);
+  if (jetzt < 1700000000) return cfg.hellTag;   // no time yet
+  struct tm t;
+  localtime_r(&jetzt, &t);
+  int h = t.tm_hour, von = cfg.nachtVon, bis = cfg.nachtBis;
+  bool nacht = von > bis ? (h >= von || h < bis) : (von < bis && h >= von && h < bis);
+  return nacht ? cfg.hellNacht : cfg.hellTag;
+}
+
 static void zeitzoneSetzen(const char *tz) {
   if (!tzGueltig(tz, sizeof(cfg.tz))) return;
   if (strcmp(cfg.tz, tz) != 0) {
@@ -431,7 +461,10 @@ static void apiSeiten() {
     n++;
   }
   seitenAnzahl = n;
-  if (doc["b"].is<int>()) { hell = doc["b"]; helligkeit(hell); }
+  if (doc["b"].is<int>()) dashHell = constrain((int)doc["b"], 0, 100);
+  if (doc["hell_tag"].is<int>() || doc["hell_nacht"].is<int>() || doc["nacht_von"].is<int>() || doc["nacht_bis"].is<int>())
+    zeitplanSetzen(doc["hell_tag"] | (int)cfg.hellTag, doc["hell_nacht"] | (int)cfg.hellNacht,
+                   doc["nacht_von"] | (int)cfg.nachtVon, doc["nacht_bis"] | (int)cfg.nachtBis);
   if (doc["rot"].is<int>()) rotS = doc["rot"];
   if (doc["tz"].is<const char *>()) zeitzoneSetzen(doc["tz"]);
   letzteDaten = millis();
@@ -458,12 +491,14 @@ static void apiSchluessel() {
 }
 
 static void apiStatus() {
-  char buf[400];
+  char buf[480];
   snprintf(buf, sizeof(buf),
            "{\"name\":\"%s\",\"version\":\"%s\",\"uptime\":%lu,\"ssid\":\"%s\","
-           "\"rssi\":%d,\"heap\":%u,\"seiten\":%u,\"seite\":%d,\"daten_alter_s\":%ld,\"zeit\":%ld,\"tz\":\"%s\"}",
+           "\"rssi\":%d,\"heap\":%u,\"seiten\":%u,\"seite\":%d,\"daten_alter_s\":%ld,\"zeit\":%ld,\"tz\":\"%s\","
+           "\"hell\":%u,\"hell_tag\":%u,\"hell_nacht\":%u,\"nacht_von\":%u,\"nacht_bis\":%u}",
            geraeteName, KAC_VERSION, millis() / 1000, cfg.ssid, WiFi.RSSI(), ESP.getFreeHeap(), seitenAnzahl, aktSeite,
-           datenDa ? (long)((millis() - letzteDaten) / 1000) : -1L, (long)time(nullptr), cfg.tz);
+           datenDa ? (long)((millis() - letzteDaten) / 1000) : -1L, (long)time(nullptr), cfg.tz,
+           hell, cfg.hellTag, cfg.hellNacht, cfg.nachtVon, cfg.nachtBis);
   server.send(200, "application/json", buf);
 }
 
@@ -491,6 +526,11 @@ static void einrichtungSeite() {
   h += F("</select><label>or enter the name</label><input name=ssid2 maxlength=32>"
          "<label>Password (empty: keep the stored one for the same network)</label>"
          "<input name=pass type=password maxlength=64>");
+  h += "<label>Brightness by day / at night in % and night from / to (hour, local time)</label>"
+       "<input name=ht type=number min=0 max=100 value=" + String(cfg.hellTag) + " style='width:22%'> "
+       "<input name=hn type=number min=0 max=100 value=" + String(cfg.hellNacht) + " style='width:22%'> "
+       "<input name=nv type=number min=0 max=23 value=" + String(cfg.nachtVon) + " style='width:22%'> "
+       "<input name=nb type=number min=0 max=23 value=" + String(cfg.nachtBis) + " style='width:22%'>";
   h += "<label>Time zone (POSIX TZ, e.g. CET-1CEST,M3.5.0,M10.5.0/3)</label><input name=tz maxlength=47 value=\"" +
        htmlEsc(cfg.tz) + "\">";
   h += "<label>Device key: copy it into your dashboard configuration; also the password for firmware updates "
@@ -513,6 +553,11 @@ static void einrichtungSpeichern() {
   strlcpy(cfg.ssid, ssid.c_str(), sizeof(cfg.ssid));
   if (!(gleichesNetz && pass.length() == 0)) strlcpy(cfg.pass, pass.c_str(), sizeof(cfg.pass));   // empty: keep
   if (tzGueltig(server.arg("tz").c_str(), sizeof(cfg.tz))) strlcpy(cfg.tz, server.arg("tz").c_str(), sizeof(cfg.tz));
+  if (server.arg("ht").length() && planGueltig(server.arg("ht").toInt(), server.arg("hn").toInt(), server.arg("nv").toInt(), server.arg("nb").toInt())) {
+    cfg.planMarke = PLAN_MARKE;
+    cfg.hellTag = server.arg("ht").toInt(); cfg.hellNacht = server.arg("hn").toInt();
+    cfg.nachtVon = server.arg("nv").toInt(); cfg.nachtBis = server.arg("nb").toInt();
+  }
   if (schluesselGueltig(server.arg("key").c_str())) strlcpy(cfg.token, server.arg("key").c_str(), sizeof(cfg.token));
   speichern();
   server.send(200, "text/html",
@@ -621,6 +666,10 @@ void setup() {
     }
   }
   if (!tzGueltig(cfg.tz, sizeof(cfg.tz))) strlcpy(cfg.tz, TZ_STANDARD, sizeof(cfg.tz));   // also after updating from <0.2.3
+  if (cfg.planMarke != PLAN_MARKE || !planGueltig(cfg.hellTag, cfg.hellNacht, cfg.nachtVon, cfg.nachtBis)) {
+    cfg.planMarke = PLAN_MARKE;   // defaults (also after updating from <0.5.0); saved with the boot counter below
+    cfg.hellTag = 90; cfg.hellNacht = 10; cfg.nachtVon = 23; cfg.nachtBis = 7;
+  }
   cfg.starts++;
   bool geste = cfg.starts >= GESTE_ANZAHL;
   if (geste) cfg.starts = 0;
@@ -647,6 +696,8 @@ void loop() {
   static uint32_t zuletzt = 0;
   if (millis() - zuletzt >= 250) {
     zuletzt = millis();
+    uint8_t soll = sollHelligkeit();
+    if (soll != hell) { hell = soll; helligkeit(hell); }
     anzeigen();
   }
 }

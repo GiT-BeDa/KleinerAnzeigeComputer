@@ -291,18 +291,13 @@ def seite_nas(d):
     return {"t": CFG["NAS_TITLE"], "z": z[:8]}
 
 
-def helligkeit():
-    # dimmed at night (NACHT_VON..NACHT_BIS o'clock)
-    h = time.localtime().tm_hour
-    von, bis = int(CFG["NACHT_VON"]), int(CFG["NACHT_BIS"])
-    nacht = (h >= von or h < bis) if von > bis else (von <= h < bis)
-    return int(CFG["HELL_NACHT"] if nacht else CFG["HELL_TAG"])
-
-
 class Geraet:
     """KAC firmware (GiT-BeDa/KleinerAnzeigeComputer): POST /api/seiten with X-Token."""
     def senden(self, seiten):
-        daten = {"b": helligkeit(), "rot": int(CFG["ROT_S"]), "seiten": seiten}
+        # brightness schedule: the device dims by itself (also when this program stops); stored only on change
+        daten = {"rot": int(CFG["ROT_S"]), "seiten": seiten,
+                 "hell_tag": int(CFG["HELL_TAG"]), "hell_nacht": int(CFG["HELL_NACHT"]),
+                 "nacht_von": int(CFG["NACHT_VON"]), "nacht_bis": int(CFG["NACHT_BIS"])}
         if CFG["TZ"]:
             daten["tz"] = CFG["TZ"]
         body = json.dumps(daten, ensure_ascii=False)
