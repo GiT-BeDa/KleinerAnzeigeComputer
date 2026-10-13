@@ -468,7 +468,7 @@ static void apiSeiten() {
   if (doc["rot"].is<int>()) rotS = doc["rot"];
   if (doc["tz"].is<const char *>()) zeitzoneSetzen(doc["tz"]);
   letzteDaten = millis();
-  if (cfg.schonDaten != DATEN_MARKE) { cfg.schonDaten = DATEN_MARKE; speichern(); }   // once per device
+  if (n > 0 && cfg.schonDaten != DATEN_MARKE) { cfg.schonDaten = DATEN_MARKE; speichern(); }   // once, real pages only
   datenDa = true;
   server.send(200, "application/json", String("{\"ok\":true,\"seiten\":") + n + "}");
 }
