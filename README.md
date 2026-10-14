@@ -337,6 +337,9 @@ every n seconds:
    collect values  →  build pages as JSON  →  POST /api/seiten  →  on error: carry on
 ```
 
+**New here? Start with [`examples/hello_world.py`](examples/hello_world.py)** (chapter 7.2) and turn it into your
+own dashboard. [`tools/kac_dashboard.py`](tools/kac_dashboard.py) is a larger real-world example (chapter 7.5).
+
 ### 7.1 Designing pages
 
 Each page has **8 rows**. The font is proportional. As a rule of thumb, **label + value together fit about
@@ -353,44 +356,27 @@ Good practice:
 - **No repetition** across pages. The clock is always in the header anyway.
 - **Character set:** ASCII plus `°` only. Umlauts, `·`, `–`, arrows and emojis are not displayed.
 
-### 7.2 Minimal example with `curl`
+### 7.2 Start here: `examples/`
+
+| File | What it does |
+|---|---|
+| [`hello_world.sh`](examples/hello_world.sh) | one `curl` call that sends a single page – the quickest test whether address and key are right |
+| [`hello_world.py`](examples/hello_world.py) | Python, standard library only, commented step by step: a **Hello** page with every row type and a **System** page with live CPU, RAM, disk and uptime of your computer, refreshed every 5 seconds |
 
 ```sh
-curl -s -X POST http://<device>/api/seiten -H "X-Token: $KAC_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"seiten":[{"t":"Test","z":[{"y":"h","l":"Hello","v":"World"},{"y":"b","l":"CPU","p":42,"v":"42 %"}]}]}'
+KAC_HOST=192.168.1.50 KAC_KEY=yourkey sh examples/hello_world.sh
+KAC_HOST=192.168.1.50 KAC_KEY=yourkey python3 examples/hello_world.py          # until Ctrl+C
+KAC_HOST=192.168.1.50 KAC_KEY=yourkey python3 examples/hello_world.py --once   # send once, print the JSON
 ```
 
-### 7.3 Minimal example in Python
+The key is shown on the display's **Device** page and on its setup page. `{"ok":true,...}` means it works;
+`403` means the key is wrong.
 
-```python
-import json, os, time, urllib.request
+To build your own dashboard, copy `hello_world.py` and replace `system_page()` with whatever you want to show:
+a smart plug, a weather API, your CI pipeline, a printer, a server. The helper functions `heading()`, `row()`,
+`bar()`, `bar_down()`, `bar_up()` and `empty()` build the rows; `send()` does the HTTP part.
 
-DEVICE = "http://192.168.1.50"           # address of the KAC
-TOKEN = os.environ["KAC_TOKEN"]          # device key, never store it in the code
-
-def load():                              # example value: system load in %
-    return min(100, os.getloadavg()[0] * 100 / os.cpu_count())
-
-def send(pages, brightness=80):
-    body = json.dumps({"b": brightness, "rot": 30, "seiten": pages}).encode()
-    req = urllib.request.Request(DEVICE + "/api/seiten", body,
-                                 {"X-Token": TOKEN, "Content-Type": "application/json"})
-    urllib.request.urlopen(req, timeout=10).read()
-
-while True:
-    l = load()
-    page = {"t": "Server", "z": [
-        {"y": "h", "l": os.uname().nodename, "v": time.strftime("%H:%M:%S")},
-        {"y": "b", "l": "Load", "p": round(l), "v": "%d %%" % l, "a": int(l > 90)},
-    ]}
-    try:
-        send([page])
-    except Exception as e:               # device briefly unreachable: just carry on
-        print("error:", e)
-    time.sleep(5)
-```
-
-### 7.4 Update rate
+### 7.3 Update rate
 
 | What | Recommendation |
 |---|---|
@@ -400,14 +386,14 @@ while True:
 
 The device writes **nothing to flash** when receiving data, so frequent updates cause no wear.
 
-### 7.5 Running it as a service (systemd)
+### 7.4 Running it as a service (systemd)
 
 `tools/kac-dashboard.service` is a ready-made unit: copy the repository to `/opt/kac`, the configuration to
 `/etc/kac/kac.env` (mode 600), then `systemctl enable --now kac-dashboard.service`. For your own script,
 the same pattern applies: credentials in a file with mode 600 (`EnvironmentFile=` or your own parser),
 `Restart=always`, `ProtectSystem=strict`.
 
-### 7.6 Complete example: `tools/kac_dashboard.py`
+### 7.5 Advanced example: `tools/kac_dashboard.py`
 
 A production dashboard for an **OPNsense** firewall and a **Linux NAS**, with up to three pages:
 
