@@ -210,9 +210,9 @@ def seite_firewall(d):
     c, m, st = d["cpu"], d["mem"], d["states"]
     cpu = sum(c.get(k) or 0 for k in ("user", "nice", "system", "interrupt"))
     ram = (m.get("active") or 0) + (m.get("wire") or 0)     # used = active + wired (without cache/ARC)
-    return {"t": CFG["FW_TITLE"], "z": [
-        {"y": "h", "l": CFG["FW_TITLE"], "v": "" if temp is None else "%d \u00b0C" % round(temp),
-         "a": int(temp is not None and temp >= 75)},
+    # the title is already in the header; the first row shows the CPU temperature, if the firewall has one
+    kopf = [] if temp is None else [{"y": "h", "l": "CPU-Temp", "v": "%d \u00b0C" % round(temp), "a": int(temp >= 75)}]
+    return {"t": CFG["FW_TITLE"], "z": kopf + [
         {"y": "b", "l": "CPU", "p": balken(cpu, 100), "v": "%d %%" % round(cpu)},
         {"y": "b", "l": "RAM", "p": balken(ram, 100), "v": "%d %%" % round(ram)},
         {"y": "k", "l": "States", "v": tausender(st.get("pfstates") or 0)},
@@ -343,7 +343,7 @@ def seite_pve(d):
     t = d["temps"]
     kern = max(t.get("coretemp", [0]) + t.get("k10temp", [0]))
     nvme = sorted(t.get("nvme", []), reverse=True)
-    z = [{"y": "h", "l": CFG["PVE_TITLE"], "v": "CPU %d \u00b0C" % round(kern), "a": int(kern >= 85)},
+    z = [{"y": "h", "l": "CPU-Temp", "v": "%d \u00b0C" % round(kern), "a": int(kern >= 85)},
          {"y": "b", "l": "CPU", "p": balken(cpu, 100), "v": "%d %%" % round(cpu)},
          {"y": "b", "l": "RAM", "p": balken(ram, 100), "v": "%d %%" % round(ram)}]
     if nvme:
