@@ -26,6 +26,7 @@
 #include <TFT_eSPI.h>
 #include <qrcode.h>
 #include <time.h>
+#include <new>
 extern "C" {
 #include <user_interface.h>
 }
@@ -86,9 +87,35 @@ struct Seite {
   Zeile z[ZEILEN];
 };
 
-static const uint8_t MAX_SEITEN = 4;
-static Seite seiten[MAX_SEITEN];
+// Pages are allocated one by one on the heap, so the number is limited only by free memory, not by the
+// firmware. HEAP_RESERVE stays free for Wi-Fi and the web server; while a request is parsed, its body and
+// JSON document (ANFRAGE_BEDARF, measured ~7 KB at 3.8 KB body) are already taken from the free heap.
+static const uint8_t SEITEN_ZEIGER = 64;          // upper bound of the pointer table (256 bytes)
+static const uint32_t HEAP_RESERVE = 8000, ANFRAGE_BEDARF = 7500;
+static const size_t MAX_BODY = 4096;               // per request; more pages go in several requests ("ab")
+static Seite *seiten[SEITEN_ZEIGER];
 static uint8_t seitenAnzahl = 0;
+
+static uint8_t maxSeiten(bool inAnfrage) {   // pages that fit: allocated ones plus what the free heap allows
+  uint8_t belegt = 0;
+  while (belegt < SEITEN_ZEIGER && seiten[belegt]) belegt++;
+  uint32_t frei = ESP.getFreeHeap(), reserve = HEAP_RESERVE + (inAnfrage ? 0 : ANFRAGE_BEDARF);
+  uint32_t mehr = frei > reserve ? (frei - reserve) / (sizeof(Seite) + 8) : 0;
+  return (uint8_t)min<uint32_t>(SEITEN_ZEIGER, belegt + mehr);
+}
+
+static Seite *seiteHolen(uint8_t i) {   // allocates on demand; nullptr when memory runs short
+  if (i >= SEITEN_ZEIGER) return nullptr;
+  if (!seiten[i]) {
+    if (ESP.getFreeHeap() < HEAP_RESERVE + sizeof(Seite) || ESP.getMaxFreeBlockSize() < sizeof(Seite) + 64) return nullptr;
+    seiten[i] = new (std::nothrow) Seite;
+  }
+  return seiten[i];
+}
+
+static void seitenFreigeben(uint8_t ab) {   // drops pages from index ab onward
+  for (uint8_t i = ab; i < SEITEN_ZEIGER; i++) { delete seiten[i]; seiten[i] = nullptr; }
+}
 static Zeile gezeichnet[ZEILEN];
 static bool zeileGueltig[ZEILEN];
 static int aktSeite = -1;
@@ -301,7 +328,7 @@ static void kopfZeichnen(bool erzwingen) {
     }
     strftime(datum, sizeof(datum), DATUMSFORMATE[cfg.datumFormat < DATUMSFORMATE_N ? cfg.datumFormat : 0][0], &t);
   }
-  if (aktSeite >= 0 && aktSeite < seitenAnzahl) strlcpy(titel, seiten[aktSeite].titel, sizeof(titel));
+  if (aktSeite >= 0 && aktSeite < seitenAnzahl) strlcpy(titel, seiten[aktSeite]->titel, sizeof(titel));
   else strlcpy(titel, eigenerTitel, sizeof(titel));
   bool alt = !datenDa || millis() - letzteDaten > DATEN_ALT_MS;
   bool offline = WiFi.status() != WL_CONNECTED;
@@ -408,7 +435,7 @@ static void anzeigen() {
   const Seite *s;
   int neu;
   if (standard) { neu = index == 0 ? SEITE_DEVICE : SEITE_GUIDE; standardSeite(eigen, neu); s = &eigen; }
-  else { neu = index; s = &seiten[index]; }
+  else { neu = index; s = seiten[index]; }
   if (neu != aktSeite) {
     aktSeite = neu;
     memset(zeileGueltig, 0, sizeof(zeileGueltig));
@@ -446,9 +473,11 @@ static bool tokenOk() {
 }
 
 static void apiSeiten() {
+  // {"seiten":[...]} replaces all pages. Many pages: send them in parts with "ab" (index of the first page
+  // in this request) and "gesamt" (total number); pages from "gesamt" on are dropped.
   if (!tokenOk()) return;
   const String &body = server.arg("plain");
-  if (body.length() == 0 || body.length() > 4096) {
+  if (body.length() == 0 || body.length() > MAX_BODY) {
     server.send(400, "application/json", "{\"error\":\"size\"}");
     return;
   }
@@ -459,16 +488,26 @@ static void apiSeiten() {
     return;
   }
   JsonArray arr = doc["seiten"].as<JsonArray>();
-  uint8_t n = 0;
+  int ab = doc["ab"] | 0;
+  if (ab < 0 || ab > seitenAnzahl || ab >= SEITEN_ZEIGER) {
+    server.send(400, "application/json", "{\"error\":\"ab\"}");
+    return;
+  }
+  int gesamt = doc["gesamt"] | (int)(ab + arr.size());
+  gesamt = constrain(gesamt, ab, (int)SEITEN_ZEIGER);
+  seitenFreigeben(gesamt);              // first free what is no longer needed
+  uint8_t n = ab;
+  bool voll = false;
   for (JsonObject so : arr) {
-    if (n >= MAX_SEITEN) break;
-    Seite &s = seiten[n];
-    memset(&s, 0, sizeof(s));
-    strlcpy(s.titel, so["t"] | "", sizeof(s.titel));
+    if (n >= gesamt) break;
+    Seite *s = seiteHolen(n);
+    if (!s) { voll = true; break; }
+    memset(s, 0, sizeof(*s));
+    strlcpy(s->titel, so["t"] | "", sizeof(s->titel));
     uint8_t i = 0;
     for (JsonObject zo : so["z"].as<JsonArray>()) {
       if (i >= ZEILEN) break;
-      Zeile &z = s.z[i++];
+      Zeile &z = s->z[i++];
       const char *typ = zo["y"] | "";
       z.typ = typ[0] == '-' ? 0 : typ[0];
       strlcpy(z.l, zo["l"] | "", sizeof(z.l));
@@ -478,6 +517,9 @@ static void apiSeiten() {
     }
     n++;
   }
+  // pages still expected from a later part keep their previous content, as far as they exist
+  while (!voll && n < gesamt && seiten[n]) n++;
+  if (voll) seitenFreigeben(n);
   seitenAnzahl = n;
   if (doc["b"].is<int>()) dashHell = constrain((int)doc["b"], 0, 100);
   if (doc["hell_tag"].is<int>() || doc["hell_nacht"].is<int>() || doc["nacht_von"].is<int>() || doc["nacht_bis"].is<int>())
@@ -488,7 +530,8 @@ static void apiSeiten() {
   letzteDaten = millis();
   if (n > 0 && cfg.schonDaten != DATEN_MARKE) { cfg.schonDaten = DATEN_MARKE; speichern(); }   // once, real pages only
   datenDa = true;
-  server.send(200, "application/json", String("{\"ok\":true,\"seiten\":") + n + "}");
+  server.send(200, "application/json", String("{\"ok\":true,\"seiten\":") + n + ",\"max_seiten\":" + maxSeiten(true) +
+                                         (voll ? ",\"voll\":true}" : "}"));
 }
 
 // Change the device key with the current one: {"key":"<new>"}, or {} for a new random key (returned once).
@@ -509,14 +552,15 @@ static void apiSchluessel() {
 }
 
 static void apiStatus() {
-  char buf[480];
+  char buf[560];
   snprintf(buf, sizeof(buf),
            "{\"name\":\"%s\",\"version\":\"%s\",\"uptime\":%lu,\"ssid\":\"%s\","
            "\"rssi\":%d,\"heap\":%u,\"seiten\":%u,\"seite\":%d,\"daten_alter_s\":%ld,\"zeit\":%ld,\"tz\":\"%s\","
-           "\"hell\":%u,\"hell_tag\":%u,\"hell_nacht\":%u,\"nacht_von\":%u,\"nacht_bis\":%u}",
+           "\"hell\":%u,\"hell_tag\":%u,\"hell_nacht\":%u,\"nacht_von\":%u,\"nacht_bis\":%u,"
+           "\"max_seiten\":%u,\"max_zeilen\":%d,\"max_bytes\":%u}",
            geraeteName, KAC_VERSION, millis() / 1000, cfg.ssid, WiFi.RSSI(), ESP.getFreeHeap(), seitenAnzahl, aktSeite,
            datenDa ? (long)((millis() - letzteDaten) / 1000) : -1L, (long)time(nullptr), cfg.tz,
-           hell, cfg.hellTag, cfg.hellNacht, cfg.nachtVon, cfg.nachtBis);
+           hell, cfg.hellTag, cfg.hellNacht, cfg.nachtVon, cfg.nachtBis, maxSeiten(false), ZEILEN, (unsigned)MAX_BODY);
   server.send(200, "application/json", buf);
 }
 

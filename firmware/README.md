@@ -7,12 +7,12 @@ Older images are in the Git history.
 
 | File | Version | Size | MD5 | SHA-256 |
 |---|---|---|---|---|
-| [kac-0.7.3.bin](kac-0.7.3.bin) | 0.7.3 | 407712 bytes | `a5c74eb506b3700dcd2c13f48df80fc6` | `90a42ec3f03f17d5d969cd95ce3eccb13c26f807402eaa9839fbdf4a8c1111d0` |
+| [kac-0.8.0.bin](kac-0.8.0.bin) | 0.8.0 | 410144 bytes | `304a9f007a24b7e84562a47ac1c6406a` | `f6a64101a127ce6d57d76336cbdcd2722e206270a4ad1b4543a845c60b16e880` |
 
 Check the download before uploading it:
 
 ```sh
-md5sum kac-0.7.3.bin        # Linux
-md5 kac-0.7.3.bin           # macOS
-certutil -hashfile kac-0.7.3.bin MD5   # Windows
+md5sum kac-0.8.0.bin        # Linux
+md5 kac-0.8.0.bin           # macOS
+certutil -hashfile kac-0.8.0.bin MD5   # Windows
 ```

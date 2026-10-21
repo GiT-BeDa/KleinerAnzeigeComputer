@@ -36,7 +36,7 @@ def send(pages, seconds_per_page=10):
     request = urllib.request.Request(f"http://{HOST}/api/seiten", data=body, method="POST",
                                      headers={"X-Token": KEY, "Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=10) as answer:
-        return answer.read().decode()          # {"ok":true,"seiten":2}
+        return answer.read().decode()          # {"ok":true,"seiten":2,"max_seiten":27}
 
 
 # ---------------------------------------------------------------------------------------------------------

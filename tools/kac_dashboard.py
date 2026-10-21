@@ -359,6 +359,9 @@ def seite_pve(d):
     return {"t": CFG["PVE_TITLE"], "z": z[:8]}
 
 
+MAX_BYTES = 3800   # device accepts 4096 bytes per request (/api/status: max_bytes); keep a margin
+
+
 class Geraet:
     """KAC firmware (GiT-BeDa/KleinerAnzeigeComputer): POST /api/seiten with X-Token."""
     def senden(self, seiten):
@@ -368,9 +371,23 @@ class Geraet:
                  "nacht_von": int(CFG["NACHT_VON"]), "nacht_bis": int(CFG["NACHT_BIS"])}
         if CFG["TZ"]:
             daten["tz"] = CFG["TZ"]
-        body = json.dumps(daten, ensure_ascii=False)
-        return requests.post(CFG["TV_URL"] + "/api/seiten", data=body.encode(), timeout=10,
-                             headers={"X-Token": CFG["KAC_TOKEN"], "Content-Type": "application/json"})
+        # One request if it fits; otherwise parts with "ab"/"gesamt" (firmware >= 0.8), each below MAX_BYTES.
+        teile, teil = [], []
+        for seite in seiten:
+            if teil and len(json.dumps(dict(daten, seiten=teil + [seite], ab=99, gesamt=99)).encode()) > MAX_BYTES:
+                teile.append(teil)
+                teil = []
+            teil.append(seite)
+        teile.append(teil)
+        ab, r = 0, None
+        for teil in teile:
+            stueck = dict(daten, seiten=teil) if len(teile) == 1 else dict(daten, seiten=teil, ab=ab, gesamt=len(seiten))
+            r = requests.post(CFG["TV_URL"] + "/api/seiten", data=json.dumps(stueck).encode(), timeout=10,
+                              headers={"X-Token": CFG["KAC_TOKEN"], "Content-Type": "application/json"})
+            if r.status_code != 200 or r.json().get("voll"):    # device memory full: it keeps what fit
+                break
+            ab += len(teil)
+        return r
 
 
 def main():

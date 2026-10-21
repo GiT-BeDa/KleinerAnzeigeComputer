@@ -35,7 +35,7 @@ on bk99.de ([German version](https://www.bk99.de/blog/2026/kac/)). The device's 
 ```
  ┌───────────────────────┐   POST /api/seiten (JSON, every n s)  ┌───────────────────────────┐
  │ Your program          │ ────────────────────────────────────▶ │ KAC (SmallTV Ultra)       │
- │ (Python, shell, ...)  │        header X-Token                 │ - stores up to 4 pages    │
+ │ (Python, shell, ...)  │        header X-Token                 │ - stores ~25 pages (RAM)  │
  │ collects metrics      │ ◀──────────────────────────────────── │ - rotates every rot s     │
  └───────────────────────┘        {"ok":true,"seiten":3}         │ - redraws changes only    │
                                                                  │ - clock/date via NTP      │
@@ -154,7 +154,8 @@ You can therefore send data very often (tested: every second) without any flicke
 
 ### 3.5 Page rotation
 
-Up to **4 pages**. Which page is shown depends on the wall clock:
+As many pages as fit into memory, about **25–28** with 8 full rows each (`max_seiten` in `GET /api/status`).
+The firmware has no fixed page limit; a new dashboard never needs new firmware. Which page is shown depends on the wall clock:
 `page = (Unix time / rot) mod count`. With `rot = 30` and 2 pages, page 1 appears on the full minute and page 2
 on the half minute. Your program does not have to control the rotation; it just sends all pages.
 
@@ -194,13 +195,13 @@ same result; the image contains no secret, every device creates its own key.
 ### 4.1 Flash the ready-made image (no compiler needed)
 
 1. Download the latest image from [`firmware/`](firmware/), e.g.
-   [kac-0.7.3.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.7.3.bin), and check its MD5
-   (`a5c74eb506b3700dcd2c13f48df80fc6` for 0.7.3, all values in [`firmware/README.md`](firmware/README.md)).
+   [kac-0.8.0.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.8.0.bin), and check its MD5
+   (`304a9f007a24b7e84562a47ac1c6406a` for 0.8.0, all values in [`firmware/README.md`](firmware/README.md)).
 2. Find the device's address in your router (the factory firmware also shows it on the display) and open
    `http://<device>/update`.
 3. Choose the file in the **firmware** field (not "filesystem") and click **Update**, or use curl:
    ```sh
-   curl -F "firmware=@kac-0.7.3.bin" http://<device>/update
+   curl -F "firmware=@kac-0.8.0.bin" http://<device>/update
    # → "Update Success! Rebooting..."
    ```
 4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the
@@ -253,7 +254,8 @@ a rescue path in case of broken firmware.
   "nacht_von": 23, "nacht_bis": 7,       //           night hours, local time
   "rot": 30,                     // seconds per page, 5..255        (optional, default 30)
   "tz": "CET-1CEST,M3.5.0,M10.5.0/3",  // POSIX time zone             (optional, stored only when changed)
-  "seiten": [                    // pages, 1..3
+  "ab": 0, "gesamt": 2,          // only when sending in parts, see below   (optional)
+  "seiten": [                    // pages
     {
       "t": "Internet",           // page title, up to 15 characters
       "z": [                     // rows, up to 8, top to bottom
@@ -276,6 +278,7 @@ a rescue path in case of broken firmware.
 | `rot` | rotation interval |
 | `tz` | time zone (POSIX TZ string) |
 | `seiten` | pages |
+| `ab`, `gesamt` | first page index of this request, total number of pages (sending in parts) |
 | `t` | page title |
 | `z` | rows (*Zeilen*) |
 | `y` | row type (chapter 3.3) |
@@ -283,19 +286,26 @@ a rescue path in case of broken firmware.
 
 | Response | Meaning |
 |---|---|
-| `200 {"ok":true,"seiten":n}` | accepted, `n` pages stored |
+| `200 {"ok":true,"seiten":n,"max_seiten":m}` | accepted, `n` pages stored, room for about `m` |
+| `200 {…,"voll":true}` | memory full: the pages that fit are kept, the rest is dropped |
+| `400 {"error":"ab"}` | `ab` larger than the number of stored pages |
 | `400 {"error":"size"}` | empty or larger than 4096 bytes |
 | `400 {"error":"json","detail":...}` | invalid JSON |
 | `403 {"error":"token"}` | key missing or wrong |
 
 Every update **replaces all pages**. Missing rows are empty.
 
+**Many pages:** one request carries at most 4096 bytes (about 6 full pages). Send more in parts: the first
+request with `"ab":0,"gesamt":N`, the next with `"ab":` the number of pages already sent, and so on. Pages
+from `gesamt` on are dropped; pages not yet resent keep their previous content, so the display never runs short
+in between. `tools/kac_dashboard.py` does this automatically.
+
 ### `GET /api/status`
 
 ```json
 {"name":"KleinerAnzeigeComputer-4670fa","version":"0.2.1","uptime":3600,"ssid":"MyWiFi","rssi":-45,"heap":33800,
  "seiten":3,"seite":1,"daten_alter_s":4,"zeit":1791838000,"tz":"CET-1CEST,M3.5.0,M10.5.0/3",
- "hell":10,"hell_tag":90,"hell_nacht":10,"nacht_von":23,"nacht_bis":7}
+ "hell":10,"hell_tag":90,"hell_nacht":10,"nacht_von":23,"nacht_bis":7,"max_seiten":27,"max_zeilen":8,"max_bytes":4096}
 ```
 
 `daten_alter_s` = seconds since the last update (−1: never), `seite` = page currently shown (−1: built-in Device page, −2: built-in Guide page),
@@ -395,7 +405,7 @@ the same pattern applies: credentials in a file with mode 600 (`EnvironmentFile=
 
 ### 7.5 Advanced example: `tools/kac_dashboard.py`
 
-A production dashboard for an **OPNsense** firewall, a **Linux NAS** and a **Proxmox VE** host, with up to four pages:
+A production dashboard for an **OPNsense** firewall, a **Linux NAS** and a **Proxmox VE** host, with one page per source:
 
 | Page | Content | Source |
 |---|---|---|
@@ -461,7 +471,8 @@ curl -u "admin:<device key>" -F "firmware=@.pio/build/smalltv/firmware.bin" http
 
 ## 10. Limits
 
-- 4 pages × 8 rows, texts up to 27 bytes, titles up to 15 bytes, JSON up to 4 KB.
+- Pages limited by RAM (about 25–28), 8 rows each, texts up to 27 bytes, titles up to 15 bytes, JSON up to 4 KB per
+  request (more pages in parts).
 - No graphics or images, no free choice of colors (normal/alert only).
 - No HTTPS (the ESP8266 has too little memory for it).
 

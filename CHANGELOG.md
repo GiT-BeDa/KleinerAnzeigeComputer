@@ -2,6 +2,12 @@
 
 All versions run on the GeekMagic SmallTV Ultra (ESP8266, ST7789 240×240). Images are in [`firmware/`](firmware/).
 
+## 0.8.0 – 2026-10-21
+- No fixed page limit: pages are allocated on demand, limited only by free memory (about 25–28 full pages).
+- `POST /api/seiten` accepts pages in parts (`ab`, `gesamt`); answers `max_seiten` and `voll` when memory is full.
+- `GET /api/status` reports `max_seiten`, `max_zeilen`, `max_bytes`.
+- Dashboard `tools/kac_dashboard.py` splits large page sets into parts automatically.
+
 ## 0.7.3 – 2026-10-21
 - Up to 4 pages (was 3).
 - Dashboard `tools/kac_dashboard.py`: optional Proxmox VE page via SSH (`PVE_SSH`); firewall page tolerates a
