@@ -2,6 +2,11 @@
 
 All versions run on the GeekMagic SmallTV Ultra (ESP8266, ST7789 240×240). Images are in [`firmware/`](firmware/).
 
+## 0.7.3 – 2026-10-21
+- Up to 4 pages (was 3).
+- Dashboard `tools/kac_dashboard.py`: optional Proxmox VE page via SSH (`PVE_SSH`); firewall page tolerates a
+  missing temperature series (e.g. OPNsense in a VM); counter jumps no longer inflate blocked packets/h.
+
 ## 0.7.2 – 2026-10-14
 - Device page reordered: Wi-Fi, signal, IP, key first, then firmware, clock, uptime, data.
 

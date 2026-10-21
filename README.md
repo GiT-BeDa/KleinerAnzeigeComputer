@@ -35,7 +35,7 @@ on bk99.de ([German version](https://www.bk99.de/blog/2026/kac/)). The device's 
 ```
  ┌───────────────────────┐   POST /api/seiten (JSON, every n s)  ┌───────────────────────────┐
  │ Your program          │ ────────────────────────────────────▶ │ KAC (SmallTV Ultra)       │
- │ (Python, shell, ...)  │        header X-Token                 │ - stores up to 3 pages    │
+ │ (Python, shell, ...)  │        header X-Token                 │ - stores up to 4 pages    │
  │ collects metrics      │ ◀──────────────────────────────────── │ - rotates every rot s     │
  └───────────────────────┘        {"ok":true,"seiten":3}         │ - redraws changes only    │
                                                                  │ - clock/date via NTP      │
@@ -154,7 +154,7 @@ You can therefore send data very often (tested: every second) without any flicke
 
 ### 3.5 Page rotation
 
-Up to **3 pages**. Which page is shown depends on the wall clock:
+Up to **4 pages**. Which page is shown depends on the wall clock:
 `page = (Unix time / rot) mod count`. With `rot = 30` and 2 pages, page 1 appears on the full minute and page 2
 on the half minute. Your program does not have to control the rotation; it just sends all pages.
 
@@ -194,13 +194,13 @@ same result; the image contains no secret, every device creates its own key.
 ### 4.1 Flash the ready-made image (no compiler needed)
 
 1. Download the latest image from [`firmware/`](firmware/), e.g.
-   [kac-0.7.2.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.7.2.bin), and check its MD5
-   (`312c730c86f6e23beb872585fa71df4d` for 0.7.2, all values in [`firmware/README.md`](firmware/README.md)).
+   [kac-0.7.3.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.7.3.bin), and check its MD5
+   (`a5c74eb506b3700dcd2c13f48df80fc6` for 0.7.3, all values in [`firmware/README.md`](firmware/README.md)).
 2. Find the device's address in your router (the factory firmware also shows it on the display) and open
    `http://<device>/update`.
 3. Choose the file in the **firmware** field (not "filesystem") and click **Update**, or use curl:
    ```sh
-   curl -F "firmware=@kac-0.7.2.bin" http://<device>/update
+   curl -F "firmware=@kac-0.7.3.bin" http://<device>/update
    # → "Update Success! Rebooting..."
    ```
 4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the
@@ -395,13 +395,14 @@ the same pattern applies: credentials in a file with mode 600 (`EnvironmentFile=
 
 ### 7.5 Advanced example: `tools/kac_dashboard.py`
 
-A production dashboard for an **OPNsense** firewall and a **Linux NAS**, with up to three pages:
+A production dashboard for an **OPNsense** firewall, a **Linux NAS** and a **Proxmox VE** host, with up to four pages:
 
 | Page | Content | Source |
 |---|---|---|
 | **Internet** | clients, VPN latency, today's traffic; per uplink IPv4/IPv6 latency and down/up bars | OPNsense API (traffic, gateway RRD, ARP) |
 | **Firewall** | CPU temperature, CPU, RAM, states, new connections/s, source/destination IPs, processes, blocked packets/h | OPNsense system health RRDs |
 | **NAS** (optional) | RAID status, usage, per disk temperature, power-on hours, CRC errors, bad sectors | SSH + `smartctl` (read-only) |
+| **Proxmox** (optional) | CPU temperature, CPU, RAM, NVMe temperatures, root file system, state and uptime of up to two VMs, host uptime | SSH (read-only: `/proc`, hwmon, `qm list`) |
 
 Configuration file (`KEY=value`, default `/root/.config/kac/kac.env`, other path via `KAC_CONFIG`):
 
@@ -413,8 +414,9 @@ Configuration file (`KEY=value`, default `/root/.config/kac/kac.env`, other path
 | `LINES` | uplinks: `name:interface:max_down:max_up:gw_v4,gw_v6`, separated by `;` | `Fiber:opt1:100:40:FIBER_GW,FIBER_GW6;DSL:wan:100:40:WAN_GW,WAN_GW6` |
 | `VPN_GATEWAY` | gateway for the VPN latency (optional) | `WG_GW` |
 | `NO_CLIENT_IFACES` | ARP interfaces that do not count as clients | `WAN,Fiber` |
-| `FW_TITLE`, `NAS_TITLE` | page titles | `Firewall`, `NAS` |
+| `FW_TITLE`, `NAS_TITLE`, `PVE_TITLE` | page titles | `Firewall`, `NAS`, `Proxmox` |
 | `NAS_SSH`, `NAS_KNOWN_HOSTS`, `NAS_DISKS`, `NAS_MOUNT` | NAS via SSH (empty `NAS_SSH`: no NAS page) | `root@nas`, `sda sdb`, `/mnt/data` |
+| `PVE_SSH`, `PVE_KNOWN_HOSTS` | Proxmox VE host via SSH (empty `PVE_SSH`: no Proxmox page) | `root@pve` |
 | `INTERVALL`, `LANGSAM`, `ROT_S` | seconds: fast values, slow values, page rotation | `5`, `60`, `30` |
 | `TZ` | time zone sent to the device (optional) | `EST5EDT,M3.2.0,M11.1.0` |
 | `HELL_TAG`, `HELL_NACHT`, `NACHT_VON`, `NACHT_BIS` | brightness schedule sent to the device (it dims by itself) | `90`, `10`, `23`, `7` |
@@ -459,7 +461,7 @@ curl -u "admin:<device key>" -F "firmware=@.pio/build/smalltv/firmware.bin" http
 
 ## 10. Limits
 
-- 3 pages × 8 rows, texts up to 27 bytes, titles up to 15 bytes, JSON up to 4 KB.
+- 4 pages × 8 rows, texts up to 27 bytes, titles up to 15 bytes, JSON up to 4 KB.
 - No graphics or images, no free choice of colors (normal/alert only).
 - No HTTPS (the ESP8266 has too little memory for it).
 

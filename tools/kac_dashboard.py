@@ -33,6 +33,8 @@ CFG = {
     "FW_TITLE": "Firewall",
     "NAS_SSH": "",              # e.g. root@nas; empty: no NAS page
     "NAS_KNOWN_HOSTS": "", "NAS_TITLE": "NAS", "NAS_DISKS": "sda sdb", "NAS_MOUNT": "/mnt/nas",
+    "PVE_SSH": "",              # e.g. root@pve; empty: no Proxmox page
+    "PVE_KNOWN_HOSTS": "", "PVE_TITLE": "Proxmox",
 }
 LEITUNGEN = []              # (name, interface, {"dn": max, "up": max}), filled from LINES
 GATEWAYS = {}               # name → gateway names, filled from LINES and VPN_GATEWAY
@@ -130,8 +132,10 @@ def opnsense_quelle():
         # last value of each series of a system RRD (e.g. "processor-system")
         r = s.get(url + "/api/diagnostics/systemhealth/get_system_health/%s/0" % name, verify=False, timeout=15)
         r.raise_for_status()
-        erg = {}
-        for x in r.json()["set"]["data"]:
+        erg, daten = {}, r.json().get("set")
+        if not isinstance(daten, dict):     # series missing, e.g. no temperature sensors in a VM
+            return erg
+        for x in daten.get("data", []):
             werte = [v for _, v in x["values"] if v is not None]
             erg[x["key"]] = werte[-1] if werte else None
         return erg
@@ -147,7 +151,8 @@ def opnsense_quelle():
             r.raise_for_status()
             for x in r.json()["set"]["data"]:
                 if x["key"] in ("inblock", "inblock6"):
-                    blocks += sum(v for _, v in x["values"][-60:] if v is not None) * 60   # packets/s * 60 s
+                    # skip counter jumps (interface change/reboot): 200k packets/s exceed a 100 Mbit/s line
+                    blocks += sum(v for _, v in x["values"][-60:] if v is not None and v < 2e5) * 60   # packets/s * 60 s
         d["blocks_h"] = blocks
         return d
     return lesen, latenz, clients, heute, system
@@ -206,7 +211,7 @@ def seite_firewall(d):
     cpu = sum(c.get(k) or 0 for k in ("user", "nice", "system", "interrupt"))
     ram = (m.get("active") or 0) + (m.get("wire") or 0)     # used = active + wired (without cache/ARC)
     return {"t": CFG["FW_TITLE"], "z": [
-        {"y": "h", "l": CFG["FW_TITLE"], "v": "-" if temp is None else "%d \u00b0C" % round(temp),
+        {"y": "h", "l": CFG["FW_TITLE"], "v": "" if temp is None else "%d \u00b0C" % round(temp),
          "a": int(temp is not None and temp >= 75)},
         {"y": "b", "l": "CPU", "p": balken(cpu, 100), "v": "%d %%" % round(cpu)},
         {"y": "b", "l": "RAM", "p": balken(ram, 100), "v": "%d %%" % round(ram)},
@@ -291,6 +296,69 @@ def seite_nas(d):
     return {"t": CFG["NAS_TITLE"], "z": z[:8]}
 
 
+# Reads only, on a Proxmox VE host: CPU (1-s sample), RAM, sensor temperatures, root file system, VMs, uptime.
+PVE_BEFEHL = r"""
+echo cpu1=$(head -1 /proc/stat); sleep 1; echo cpu2=$(head -1 /proc/stat)
+awk '/^MemTotal/{t=$2} /^MemAvailable/{a=$2} END{print "mem="t" "a}' /proc/meminfo
+for h in /sys/class/hwmon/hwmon*; do
+  n=$(cat $h/name); m=0
+  for f in $h/temp*_input; do [ -r $f ] && v=$(cat $f) && [ $v -gt $m ] && m=$v; done
+  echo t.${h##*/}=$n $m
+done
+df -k / | awk 'NR==2{print "root="$2" "$3}'
+qm list | awk 'NR>1{print "vm="$1" "$3" "$2}'
+for p in /run/qemu-server/*.pid; do [ -r $p ] && echo vmup.$(basename $p .pid)=$(ps -o etimes= -p $(cat $p)); done
+echo up=$(cut -d. -f1 /proc/uptime)
+"""
+
+
+def pve():
+    opt = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=yes"]
+    if CFG["PVE_KNOWN_HOSTS"]:
+        opt += ["-o", "UserKnownHostsFile=" + CFG["PVE_KNOWN_HOSTS"]]
+    r = subprocess.run(["ssh"] + opt + [CFG["PVE_SSH"], PVE_BEFEHL], capture_output=True, text=True, timeout=40)
+    if r.returncode != 0:
+        raise RuntimeError("ssh %d: %s" % (r.returncode, r.stderr.strip()[:120]))
+    d = {"temps": {}, "vms": []}
+    for zeile in r.stdout.splitlines():
+        k, _, v = zeile.partition("=")
+        if k.startswith("t."):
+            name, _, wert = v.rpartition(" ")
+            d["temps"].setdefault(name, []).append(int(wert) / 1000)
+        elif k == "vm":
+            vmid, status, name = v.split(" ", 2)
+            d["vms"].append((vmid, status, name))
+        else:
+            d[k] = v.strip()
+    return d
+
+
+def seite_pve(d):
+    a = [int(x) for x in d["cpu1"].split()[1:]]
+    b = [int(x) for x in d["cpu2"].split()[1:]]
+    diff = [y - x for x, y in zip(a, b)]
+    cpu = 100 * (1 - (diff[3] + diff[4]) / max(sum(diff), 1))       # without idle and iowait
+    gesamt, frei = (int(x) for x in d["mem"].split())
+    ram = 100 * (gesamt - frei) / gesamt
+    t = d["temps"]
+    kern = max(t.get("coretemp", [0]) + t.get("k10temp", [0]))
+    nvme = sorted(t.get("nvme", []), reverse=True)
+    z = [{"y": "h", "l": CFG["PVE_TITLE"], "v": "CPU %d \u00b0C" % round(kern), "a": int(kern >= 85)},
+         {"y": "b", "l": "CPU", "p": balken(cpu, 100), "v": "%d %%" % round(cpu)},
+         {"y": "b", "l": "RAM", "p": balken(ram, 100), "v": "%d %%" % round(ram)}]
+    if nvme:
+        z.append({"y": "k", "l": "NVMe", "v": " / ".join("%d" % round(x) for x in nvme) + " \u00b0C",
+                  "a": int(nvme[0] >= 70)})
+    groesse, belegt = (int(x) for x in d["root"].split())
+    z.append({"y": "b", "l": "Disk /", "p": round(belegt * 100 / groesse), "v": "%d %%" % round(belegt * 100 / groesse)})
+    for vmid, status, name in d["vms"][:2]:
+        laeuft = status == "running"
+        up = int(d.get("vmup." + vmid) or 0)
+        z.append({"y": "k", "l": "VM " + name[:12], "v": dauer(up) if laeuft else status[:12], "a": int(not laeuft)})
+    z.append({"y": "k", "l": "Laufzeit", "v": dauer(int(d.get("up") or 0))})
+    return {"t": CFG["PVE_TITLE"], "z": z[:8]}
+
+
 class Geraet:
     """KAC firmware (GiT-BeDa/KleinerAnzeigeComputer): POST /api/seiten with X-Token."""
     def senden(self, seiten):
@@ -330,7 +398,9 @@ def main():
                 quellen = [("anzahl", clients), ("vol", heute), ("sys", system)]
                 if CFG["NAS_SSH"]:
                     quellen.append(("nas", nas))
-                cache["nas"] = None
+                if CFG["PVE_SSH"]:
+                    quellen.append(("pve", pve))
+                cache["nas"] = cache["pve"] = None
                 for name, f in quellen:
                     try:
                         cache[name] = f()
@@ -343,6 +413,8 @@ def main():
                 seiten.append(seite_firewall(cache["sys"]))
             if cache.get("nas"):
                 seiten.append(seite_nas(cache["nas"]))
+            if cache.get("pve"):
+                seiten.append(seite_pve(cache["pve"]))
             r = tv.senden(seiten)
             if once or r.status_code != 200:
                 print(time.strftime("%F %T"), r.status_code, r.text.strip(), flush=True)

@@ -86,7 +86,8 @@ struct Seite {
   Zeile z[ZEILEN];
 };
 
-static Seite seiten[3];
+static const uint8_t MAX_SEITEN = 4;
+static Seite seiten[MAX_SEITEN];
 static uint8_t seitenAnzahl = 0;
 static Zeile gezeichnet[ZEILEN];
 static bool zeileGueltig[ZEILEN];
@@ -460,7 +461,7 @@ static void apiSeiten() {
   JsonArray arr = doc["seiten"].as<JsonArray>();
   uint8_t n = 0;
   for (JsonObject so : arr) {
-    if (n >= 3) break;
+    if (n >= MAX_SEITEN) break;
     Seite &s = seiten[n];
     memset(&s, 0, sizeof(s));
     strlcpy(s.titel, so["t"] | "", sizeof(s.titel));
