@@ -2,6 +2,34 @@
 
 All versions run on the GeekMagic SmallTV Ultra (ESP8266, ST7789 240×240). Images are in [`firmware/`](firmware/).
 
+## 0.8.10 – 2026-10-22
+- Up to 5 image pages (`POST /api/medium?nr=1..5`, only one GIF); settings page with one row per slot.
+- New row types: `g` big value (large bold font), `s` sparkline with up to 20 columns (`w`: values 0–100).
+- Settings backup: download all settings as JSON, import them (Wi-Fi and key optional) on the settings page.
+- `GET /api/status`: `medien` (per slot), `medium_aktiv` (slot number), `neustart` (reason of the last restart).
+- New: `tools/kac.py`, a small library (standard library only) for your own dashboards: row/page helpers incl.
+  `big` and `spark`, `Device.send()` with automatic parts, image upload, several displays, lookup by MAC.
+- New examples: `examples/dashboard.py` (library, sparkline, several displays), `examples/image.sh`,
+  `examples/kac-dashboard.service`; `hello_world.py` shows the new row types.
+- `tools/kac_medium.py --nr` for the image slot.
+- Removed: `tools/kac_dashboard.py` – it mirrored one particular home network (firewall, NAS, hypervisor). The
+  repository now contains only the firmware and general tools and examples for building your own dashboards.
+- 0.8.9 was a test build.
+
+## 0.8.8 – 2026-10-22
+- Image page: one GIF or JPG (up to 240×240, max. 1 MB) is shown full screen as an extra page in the rotation and
+  stays after a restart. Upload via `POST /api/medium` (`X-Token`) or the settings page, remove via
+  `DELETE /api/medium`. Progressive JPGs and other formats are refused with a clear message.
+- GIF: the decoder memory (~23.7 KB) is reserved at boot and shared with the header graphics, so it cannot be
+  fragmented; uploading a GIF restarts the device once. Bundled AnimatedGIF 2.2.3 with smaller buffers
+  (`lib/AnimatedGIF/KAC.md`). JPG: decoder memory only while drawing.
+- Crash guard: a crash while decoding blocks the image page after the restart (`medium_fehler: -3`).
+- CPU at 160 MHz (was 80 MHz) for faster GIF decoding. The display SPI stays at 40 MHz (80 MHz left it black).
+- `GET /api/status`: `medium`, `medium_aktiv`, `medium_fehler`, `gif_ms`, `gif_block`.
+- `tools/kac_medium.py`: converts any GIF/PNG/JPG/WebP (file or URL) to 240×240 with one palette for all GIF frames
+  and sends it to the device.
+- 0.8.1–0.8.7 were test builds on one device only.
+
 ## 0.8.0 – 2026-10-21
 - No fixed page limit: pages are allocated on demand, limited only by free memory (about 25–28 full pages).
 - `POST /api/seiten` accepts pages in parts (`ab`, `gesamt`); answers `max_seiten` and `voll` when memory is full.

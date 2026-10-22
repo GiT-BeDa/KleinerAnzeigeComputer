@@ -41,8 +41,9 @@ def send(pages, seconds_per_page=10):
 
 # ---------------------------------------------------------------------------------------------------------
 # 2. Building rows. A page has a title "t" (up to 15 characters) and up to 8 rows "z".
-#    Row types "y":  h heading · k label/value · b labeled bar · d / u bar with arrow down/up · - empty
-#    Fields:         l label · v value (shown right-aligned) · p bar 0..100 · a 1 = red (alert)
+#    Row types "y":  h heading · k label/value · g big value · b labeled bar · d / u bar with arrow down/up
+#                    s sparkline · - empty
+#    Fields:         l label · v value (shown right-aligned) · p bar 0..100 · w sparkline values 0..100 · a 1 = red
 #    Text: ASCII plus "°" only, about 24 characters per row in total.
 # ---------------------------------------------------------------------------------------------------------
 def heading(label, value=""):            return {"y": "h", "l": label, "v": value}
@@ -52,6 +53,9 @@ def bar(label, percent, value, alert=False):
 def bar_down(percent, value):            return {"y": "d", "p": max(0, min(100, round(percent))), "v": value}
 def bar_up(percent, value):              return {"y": "u", "p": max(0, min(100, round(percent))), "v": value}
 def empty():                             return {"y": "-"}
+def big(label, value, alert=False):      return {"y": "g", "l": label, "v": value, "a": int(alert)}   # firmware >= 0.8.10
+def spark(label, values, value):         return {"y": "s", "l": label[:7], "v": value,                 # firmware >= 0.8.10
+                                                 "w": [max(0, min(100, round(v))) for v in values[-20:]]}
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -61,12 +65,12 @@ def hello_page():
     return {"t": "Hello", "z": [
         heading("Hello World", "KAC"),
         row("Label", "value"),
-        row("Temperature", "21 °C"),          # the degree sign is the only non-ASCII character
+        big("Temperature", "21 °C"),          # the degree sign is the only non-ASCII character
         bar("CPU", 42, "42 %"),
         bar_down(70, "70 Mbit/s"),
         bar_up(25, "10 Mbit/s"),
         row("Something wrong", "red", alert=True),
-        empty(),
+        spark("History", [10, 30, 25, 60, 45, 80, 70], "70 %"),
     ]}
 
 

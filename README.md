@@ -135,9 +135,12 @@ the setup Wi-Fi is called `KAC-<chip ID>`, and the empty part of the bars is gre
 | `d` | **Down bar**: blue ▼ arrow, bar, value on the right (e.g. download) | `p`, `v`, `a` |
 | `u` | **Up bar**: orange ▲ arrow, bar, value on the right (e.g. upload) | `p`, `v`, `a` |
 | `b` | **Labeled bar**: label on the left, blue bar, value on the right (e.g. CPU) | `l`, `p`, `v`, `a` |
+| `g` | **Big value**: label grey on the left, value in a large bold font on the right (readable from a distance) | `l`, `v`, `a` |
+| `s` | **Sparkline**: label (up to 7 characters), up to 20 columns (oldest left, newest right), value on the right | `l`, `w`, `v`, `a` |
 | `-` | empty row | – |
 
-- `l` = label, `v` = value, `p` = bar fill 0–100 (percent)
+- `l` = label, `v` = value, `p` = bar fill 0–100 (percent), `w` = list of values 0–100 for `s` (the last 20 are kept),
+  e.g. `{"y":"s","l":"CRC/min","v":"1,2","w":[5,10,8,20,35]}`; with `a` = 1 the newest column is red
 - `a` = 1 → **alert**: the value (for headings also the label) or the bar turns **red**
 
 ### 3.4 Flicker-free drawing
@@ -158,6 +161,7 @@ As many pages as fit into memory, about **25–28** with 8 full rows each (`max_
 The firmware has no fixed page limit; a new dashboard never needs new firmware. Which page is shown depends on the wall clock:
 `page = (Unix time / rot) mod count`. With `rot = 30` and 2 pages, page 1 appears on the full minute and page 2
 on the half minute. Your program does not have to control the rotation; it just sends all pages.
+A stored image (chapter 6, `POST /api/medium`) is one more page at the end of the rotation.
 
 ### 3.6 Brightness
 
@@ -195,13 +199,13 @@ same result; the image contains no secret, every device creates its own key.
 ### 4.1 Flash the ready-made image (no compiler needed)
 
 1. Download the latest image from [`firmware/`](firmware/), e.g.
-   [kac-0.8.0.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.8.0.bin), and check its MD5
-   (`304a9f007a24b7e84562a47ac1c6406a` for 0.8.0, all values in [`firmware/README.md`](firmware/README.md)).
+   [kac-0.8.10.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.8.10.bin), and check its MD5
+   (`38421f5006d0ba3e5a6f4cc68b76ff5b` for 0.8.10, all values in [`firmware/README.md`](firmware/README.md)).
 2. Find the device's address in your router (the factory firmware also shows it on the display) and open
    `http://<device>/update`.
 3. Choose the file in the **firmware** field (not "filesystem") and click **Update**, or use curl:
    ```sh
-   curl -F "firmware=@kac-0.8.0.bin" http://<device>/update
+   curl -F "firmware=@kac-0.8.10.bin" http://<device>/update
    # → "Update Success! Rebooting..."
    ```
 4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the
@@ -298,7 +302,7 @@ Every update **replaces all pages**. Missing rows are empty.
 **Many pages:** one request carries at most 4096 bytes (about 6 full pages). Send more in parts: the first
 request with `"ab":0,"gesamt":N`, the next with `"ab":` the number of pages already sent, and so on. Pages
 from `gesamt` on are dropped; pages not yet resent keep their previous content, so the display never runs short
-in between. `tools/kac_dashboard.py` does this automatically.
+in between. `tools/kac.py` (`Device.send()`) does this automatically.
 
 ### `GET /api/status`
 
@@ -309,7 +313,9 @@ in between. `tools/kac_dashboard.py` does this automatically.
 ```
 
 `daten_alter_s` = seconds since the last update (−1: never), `seite` = page currently shown (−1: built-in Device page, −2: built-in Guide page),
-`zeit` = device time (Unix).
+`zeit` = device time (Unix). Since 0.8.8/0.8.10 also `medien`, `medium_aktiv`, `medium_fehler`, `gif_ms`, `gif_block`
+(image pages, see `POST /api/medium`) and `neustart` (reason of the last restart, e.g. `Software/System restart` or an
+exception with its address – useful for bug reports).
 
 ### `POST /api/schluessel`
 
@@ -329,9 +335,52 @@ Web page for people (HTTP Basic auth: user `admin`, password = device key). Sect
 | Clock and pages | 12-hour clock, date format, own NTP server, seconds per page (a dashboard may override it) |
 | Wi-Fi | network (with "search networks") and password; a new network is tried first, the device returns to the old one if it cannot connect within 20 s |
 | Device key | change the key |
+| Image pages | upload a GIF or JPG per slot (1–5), remove it |
+| Backup | download all settings as JSON (contains the Wi-Fi password and the device key), import such a file – Wi-Fi and key only if ticked (e.g. to set up a second device) |
 | Maintenance | restart, factory reset (erases Wi-Fi, key and settings, then setup starts), firmware update |
 
 Saving applies at once without a restart and writes to flash only what changed.
+
+### `POST /api/medium` – image page (GIF or JPG)
+
+Stores up to **5 pictures or animations** (slots `nr=1..5`, only one of them a GIF) and shows each **full screen
+as an extra page at the end of the rotation** (also after a restart). Multipart upload, field name `medium`,
+header `X-Token`; the type is taken from the file content. A new upload replaces the image in its slot.
+
+```bash
+curl -H "X-Token: yourkey" -F "medium=@cat.gif" "http://192.168.1.50/api/medium?nr=1"
+# {"ok":true,"nr":1,"medium":"gif","restart":true}
+curl -H "X-Token: yourkey" -F "medium=@photo.jpg" "http://192.168.1.50/api/medium?nr=2"
+curl -H "X-Token: yourkey" -X DELETE "http://192.168.1.50/api/medium?nr=2"   # remove slot 2
+curl -H "X-Token: yourkey" -X DELETE http://192.168.1.50/api/medium          # remove all images
+```
+
+| Limit | Value |
+|---|---|
+| Size | up to 240×240 px (larger JPGs are scaled down by 2, 4 or 8; wider GIFs are refused) |
+| JPG | baseline only; progressive JPGs are refused with `422` and a hint |
+| File | at most 1 MB per image, up to 5 images, only one GIF (a second GIF is refused with `422`) |
+| GIF speed | a full 240×240 frame takes about 60–140 ms; one palette for all frames is faster |
+
+**Easiest way:** [`tools/kac_medium.py`](tools/kac_medium.py) (needs Pillow) turns any GIF/PNG/JPG/WebP file or URL
+into a file that fits and sends it:
+
+```bash
+KAC_KEY=yourkey python3 tools/kac_medium.py https://example.org/animation.gif --send 192.168.1.50
+```
+
+**GIF and memory:** the GIF decoder needs about 23.7 KB in one piece. A device with a stored GIF reserves that
+block at boot and shares it with the header graphics, so after uploading a GIF the device **restarts once**
+(`"restart":true`). On the GIF page the clock is not shown. The reservation leaves about 12 KB free – enough for a
+few dashboard pages; for a device with many pages prefer a JPG, which needs no reservation.
+
+**Crash guard:** if the device crashes while decoding the image, the image page is blocked after the restart
+(`medium_fehler: -3` in `GET /api/status`) until a new image is uploaded or it is removed.
+
+Status fields: `medien` (per slot `gif`, `jpg` or empty, `!` = blocked, e.g. `gif,jpg,,,`), `medium_aktiv` (slot on
+screen, 0 = none), `medium_fehler`
+(0 ok, -1 no memory, -3 blocked after a crash, -4 GIF waits for the restart, >0 decoder error), `gif_ms` (time
+of the last GIF frame), `gif_block` (reserved bytes).
 
 ### `GET|POST /update`
 
@@ -348,7 +397,8 @@ every n seconds:
 ```
 
 **New here? Start with [`examples/hello_world.py`](examples/hello_world.py)** (chapter 7.2) and turn it into your
-own dashboard. [`tools/kac_dashboard.py`](tools/kac_dashboard.py) is a larger real-world example (chapter 7.5).
+own dashboard. For more than a few pages or several displays use the small library
+[`tools/kac.py`](tools/kac.py) (chapter 7.5); pictures and animations go on image pages (chapter 7.6).
 
 ### 7.1 Designing pages
 
@@ -361,7 +411,8 @@ Good practice:
 - **Heading (`h`) as a group header**, with the most important value on the right (e.g. temperature, latency).
 - **Bars (`d`/`u`/`b`)** for anything with an upper limit (bandwidth, CPU, disk usage). Compute `p` yourself:
   `round(value * 100 / maximum)`.
-- **Label/value (`k`)** for plain figures.
+- **Label/value (`k`)** for plain figures; **big value (`g`)** for the one figure that must be readable from across the room.
+- **Sparkline (`s`)** for a trend: keep the last values in your program and send them every time (up to 20).
 - **`a: 1`** only for real problems, so that red stands out.
 - **No repetition** across pages. The clock is always in the header anyway.
 - **Character set:** ASCII plus `°` only. Umlauts, `·`, `–`, arrows and emojis are not displayed.
@@ -372,6 +423,9 @@ Good practice:
 |---|---|
 | [`hello_world.sh`](examples/hello_world.sh) | one `curl` call that sends a single page – the quickest test whether address and key are right |
 | [`hello_world.py`](examples/hello_world.py) | Python, standard library only, commented step by step: a **Hello** page with every row type and a **System** page with live CPU, RAM, disk and uptime of your computer, refreshed every 5 seconds |
+| [`dashboard.py`](examples/dashboard.py) | the same idea with `tools/kac.py`: big value, sparkline with CPU history, several displays at once |
+| [`image.sh`](examples/image.sh) | put a GIF or JPG on an image page with `curl` |
+| [`kac-dashboard.service`](examples/kac-dashboard.service) | systemd unit to run your dashboard as a service |
 
 ```sh
 KAC_HOST=192.168.1.50 KAC_KEY=yourkey sh examples/hello_world.sh
@@ -398,47 +452,58 @@ The device writes **nothing to flash** when receiving data, so frequent updates 
 
 ### 7.4 Running it as a service (systemd)
 
-`tools/kac-dashboard.service` is a ready-made unit: copy the repository to `/opt/kac`, the configuration to
-`/etc/kac/kac.env` (mode 600), then `systemctl enable --now kac-dashboard.service`. For your own script,
-the same pattern applies: credentials in a file with mode 600 (`EnvironmentFile=` or your own parser),
-`Restart=always`, `ProtectSystem=strict`.
+[`examples/kac-dashboard.service`](examples/kac-dashboard.service) runs `examples/dashboard.py`: copy the repository
+to `/opt/kac`, put `KAC_HOST=…` and `KAC_KEY=…` into `/etc/kac/kac.env` (mode 600), then
+`systemctl enable --now kac-dashboard.service`. For your own script the same pattern applies: credentials in a file
+with mode 600, `Restart=always`, `ProtectSystem=strict`.
 
-### 7.5 Advanced example: `tools/kac_dashboard.py`
+### 7.5 Library: `tools/kac.py`
 
-A production dashboard for an **OPNsense** firewall, a **Linux NAS** and a **Proxmox VE** host, with one page per source:
+One file, Python standard library only. Copy it next to your script (or add `tools/` to `PYTHONPATH`):
 
-| Page | Content | Source |
-|---|---|---|
-| **Internet** | clients, VPN latency, today's traffic; per uplink IPv4/IPv6 latency and down/up bars | OPNsense API (traffic, gateway RRD, ARP) |
-| **Firewall** | CPU temperature, CPU, RAM, states, new connections/s, source/destination IPs, processes, blocked packets/h | OPNsense system health RRDs |
-| **NAS** (optional) | RAID status, usage, per disk temperature, power-on hours, CRC errors, bad sectors | SSH + `smartctl` (read-only) |
-| **Proxmox** (optional) | CPU temperature, CPU, RAM, NVMe temperatures, root file system, state and uptime of up to two VMs, host uptime | SSH (read-only: `/proc`, hwmon, `qm list`) |
+```python
+import kac
 
-Configuration file (`KEY=value`, default `/root/.config/kac/kac.env`, other path via `KAC_CONFIG`):
+tv = kac.Device("192.168.1.50", key="yourkey")
+tv.send([
+    kac.page("Home", [
+        kac.heading("Living room", "21:30"),
+        kac.big("Temperature", "21.5 °C"),
+        kac.spark("Power", [120, 340, 310, 600, 580], "580 W"),   # scaled to the largest value
+        kac.bar("Battery", 72, "72 %"),
+        kac.row("Window", "open", alert=True),
+    ]),
+    kac.page("Garden", [kac.big("Rain", "2 mm")]),
+], seconds_per_page=20)
+```
 
-| Key | Meaning | Example |
-|---|---|---|
-| `OPNSENSE_URL`, `OPNSENSE_KEY`, `OPNSENSE_SECRET` | firewall API (required) | `https://192.168.1.1` |
-| `KAC_TOKEN` | device key of the display (required; shown on its setup screen) | |
-| `TV_URL` | KAC device | `http://192.168.1.50` |
-| `LINES` | uplinks: `name:interface:max_down:max_up:gw_v4,gw_v6`, separated by `;` | `Fiber:opt1:100:40:FIBER_GW,FIBER_GW6;DSL:wan:100:40:WAN_GW,WAN_GW6` |
-| `VPN_GATEWAY` | gateway for the VPN latency (optional) | `WG_GW` |
-| `NO_CLIENT_IFACES` | ARP interfaces that do not count as clients | `WAN,Fiber` |
-| `FW_TITLE`, `NAS_TITLE`, `PVE_TITLE` | page titles | `Firewall`, `NAS`, `Proxmox` |
-| `NAS_SSH`, `NAS_KNOWN_HOSTS`, `NAS_DISKS`, `NAS_MOUNT` | NAS via SSH (empty `NAS_SSH`: no NAS page) | `root@nas`, `sda sdb`, `/mnt/data` |
-| `PVE_SSH`, `PVE_KNOWN_HOSTS` | Proxmox VE host via SSH (empty `PVE_SSH`: no Proxmox page) | `root@pve` |
-| `INTERVALL`, `LANGSAM`, `ROT_S` | seconds: fast values, slow values, page rotation | `5`, `60`, `30` |
-| `TZ` | time zone sent to the device (optional) | `EST5EDT,M3.2.0,M11.1.0` |
-| `HELL_TAG`, `HELL_NACHT`, `NACHT_VON`, `NACHT_BIS` | brightness schedule sent to the device (it dims by itself) | `90`, `10`, `23`, `7` |
+| Function | Purpose |
+|---|---|
+| `heading`, `row`, `big`, `bar`, `down`, `up`, `spark`, `empty`, `page` | build rows and pages (chapter 3.3) |
+| `Device(host, key)` | one display; `send(pages, seconds_per_page=None, **settings)` replaces all pages and splits large page sets into several requests |
+| `Device.by_mac(mac, key)` | finds the display by its MAC in this computer's neighbour table (`ip neigh` / `arp -an`) – only works in the **same network segment**; behind a router use the address or a DHCP reservation |
+| `upload_image(file, nr)`, `delete_image(nr)` | image pages (chapter 7.6) |
+| `status()` | `GET /api/status` as a dict |
 
-Worth noting:
+**Several displays:** create one `Device` per display and send each its own pages. Errors are raised as exceptions;
+catch them per display so one unreachable display does not stop the others (see `examples/dashboard.py`).
 
-- Rates (Mbit/s) are the **difference of two byte counters** divided by the elapsed time.
-- `max_down`/`max_up` should be the narrowest point of the line (sync rate or traffic shaper), so a full
-  bar really means "saturated".
-- The OPNsense API user needs **read privileges only**: "Reporting: Traffic", "Diagnostics: System Health",
-  "Diagnostics: ARP Table".
-- Credentials live only in the configuration file, never in the code.
+### 7.6 Pictures and animations
+
+Up to 5 GIFs or JPGs per display, each an extra full-screen page at the end of the rotation (chapter 6,
+`POST /api/medium`). The easiest way is [`tools/kac_medium.py`](tools/kac_medium.py) (needs Pillow): it takes any
+GIF/PNG/JPG/WebP file or URL, cuts or fits it to 240×240, gives a GIF one palette for all frames (faster, smaller),
+writes a baseline JPG for still pictures and sends it:
+
+```bash
+KAC_KEY=yourkey python3 tools/kac_medium.py holiday.jpg --send 192.168.1.50 --nr 2
+KAC_KEY=yourkey python3 tools/kac_medium.py https://example.org/animation.gif --send 192.168.1.50 --nr 1
+KAC_KEY=yourkey python3 tools/kac_medium.py --delete --send 192.168.1.50 --nr 2
+```
+
+Or on the settings page `http://<device>/` → *Image pages*. Only one GIF per display: the GIF decoder needs about
+23.4 KB in one piece, which the device reserves at boot (so uploading the first GIF restarts it once) – after that
+only a few dashboard pages fit next to it. JPGs need no reservation.
 
 ## 8. Building and updating the firmware
 
@@ -473,8 +538,10 @@ curl -u "admin:<device key>" -F "firmware=@.pio/build/smalltv/firmware.bin" http
 
 - Pages limited by RAM (about 25–28), 8 rows each, texts up to 27 bytes, titles up to 15 bytes, JSON up to 4 KB per
   request (more pages in parts).
-- No graphics or images, no free choice of colors (normal/alert only).
+- Pages have no graphics and no free choice of colors (normal/alert only); one GIF or JPG can be shown as an extra
+  full-screen page (chapter 6, `POST /api/medium`).
 - No HTTPS (the ESP8266 has too little memory for it).
+- A stored GIF reserves ~23.4 KB at boot; a device with a GIF then holds only a few dashboard pages.
 
 ## 11. License
 
