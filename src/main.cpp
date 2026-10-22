@@ -309,6 +309,26 @@ static void textRechts(const char *s, int xr, int ym, uint16_t farbe) {
   textZeichnen(s, xr - textBreite(s), ym, farbe);
 }
 
+// Right-aligned value that never runs into the label or bar on its left (links = first free x): if it is too wide
+// for the row font, the smaller built-in fonts 2 and 1 are tried, then it is cut with "..". The caller sets the
+// row font before.
+static void wertRechts(const char *v, int links, int ym, uint16_t farbe) {
+  int frei = RAND_R - links;
+  if (textBreite(v) <= frei) { textRechts(v, RAND_R, ym, farbe); return; }
+  for (uint8_t f : {2, 1}) {
+    spr.setTextFont(f);
+    if (textBreite(v) <= frei) { textRechts(v, RAND_R, ym, farbe); return; }
+  }
+  char k[32];
+  strlcpy(k, v, sizeof(k) - 2);
+  for (size_t n = strlen(k); n > 0; n--) {
+    k[n] = 0;
+    char t[34];
+    snprintf(t, sizeof(t), "%s..", k);
+    if (textBreite(t) <= frei) { textRechts(t, RAND_R, ym, farbe); return; }
+  }
+}
+
 // ---------------------------------------------------------------- Drawing
 static void zeileZeichnen(int i, const Zeile &z) {
   spr.fillSprite(C_BG);
@@ -317,19 +337,21 @@ static void zeileZeichnen(int i, const Zeile &z) {
     case 'h':
       spr.setFreeFont(&FreeSansBold9pt7b);
       textZeichnen(z.l, 4, ym, z.a ? C_ALERT : C_ACCENT);
-      spr.setFreeFont(&FreeSans9pt7b);
-      textRechts(z.v, RAND_R, ym, z.a ? C_ALERT : C_TEXT);
+      { int ende = z.l[0] ? 4 + textBreite(z.l) + 8 : 0;
+        spr.setFreeFont(&FreeSans9pt7b);
+        wertRechts(z.v, ende, ym, z.a ? C_ALERT : C_TEXT); }
       break;
     case 'k':
       spr.setFreeFont(&FreeSans9pt7b);
       textZeichnen(z.l, 4, ym, C_LABEL);
-      textRechts(z.v, RAND_R, ym, z.a ? C_ALERT : C_TEXT);
+      wertRechts(z.v, z.l[0] ? 4 + textBreite(z.l) + 8 : 0, ym, z.a ? C_ALERT : C_TEXT);
       break;
     case 'g':   // big value: readable from a distance
       spr.setFreeFont(&FreeSans9pt7b);
       textZeichnen(z.l, 4, ym, C_LABEL);
-      spr.setFreeFont(&FreeSansBold12pt7b);
-      textRechts(z.v, RAND_R, ym + 1, z.a ? C_ALERT : C_TEXT);
+      { int ende = z.l[0] ? 4 + textBreite(z.l) + 8 : 0;
+        spr.setFreeFont(&FreeSansBold12pt7b);
+        wertRechts(z.v, ende, ym + 1, z.a ? C_ALERT : C_TEXT); }
       break;
     case 's': {   // sparkline: label, columns for up to KURVE_MAX values (oldest left), value
       spr.setFreeFont(&FreeSans9pt7b);
@@ -341,7 +363,7 @@ static void zeileZeichnen(int i, const Zeile &z) {
         int h = max(1, (int)(uint8_t)z.l[KURVE_AB + j] * bh / 100);
         spr.fillRect(x0 + j * sw, by - h + 1, sw - 1, h, z.a && j == n - 1 ? C_ALERT : C_DOWN);
       }
-      textRechts(z.v, RAND_R, ym, z.a ? C_ALERT : C_TEXT);
+      wertRechts(z.v, bx + KURVE_MAX * sw + 3, ym, z.a ? C_ALERT : C_TEXT);
       break;
     }
     case 'd':
@@ -354,7 +376,7 @@ static void zeileZeichnen(int i, const Zeile &z) {
       if (w > 0) spr.fillRect(bx, by, w, bh, z.a ? C_ALERT : f);
       if (w < bw) spr.fillRect(bx + w, by, bw - w, bh, C_BALKEN);
       spr.setFreeFont(&FreeSans9pt7b);
-      textRechts(z.v, RAND_R, ym, z.a ? C_ALERT : C_TEXT);
+      wertRechts(z.v, bx + bw + 4, ym, z.a ? C_ALERT : C_TEXT);
       break;
     }
     case 'b': {   // bar with label on the left (e.g. CPU/RAM)
@@ -364,7 +386,7 @@ static void zeileZeichnen(int i, const Zeile &z) {
       int w = (int)bw * min<uint8_t>(z.p, 100) / 100;
       if (w > 0) spr.fillRect(bx, by, w, bh, z.a ? C_ALERT : C_DOWN);
       if (w < bw) spr.fillRect(bx + w, by, bw - w, bh, C_BALKEN);
-      textRechts(z.v, RAND_R, ym, z.a ? C_ALERT : C_TEXT);
+      wertRechts(z.v, bx + bw + 4, ym, z.a ? C_ALERT : C_TEXT);
       break;
     }
     default:

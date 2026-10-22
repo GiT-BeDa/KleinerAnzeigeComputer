@@ -2,6 +2,10 @@
 
 All versions run on the GeekMagic SmallTV Ultra (ESP8266, ST7789 240×240). Images are in [`firmware/`](firmware/).
 
+## 0.8.11 – 2026-10-22
+- Values that are too wide no longer run over the label or bar on their left: the device tries two smaller
+  built-in fonts and finally cuts the value with "..". Example: a 32-character device key on the Device page.
+
 ## 0.8.10 – 2026-10-22
 - Up to 5 image pages (`POST /api/medium?nr=1..5`, only one GIF); settings page with one row per slot.
 - New row types: `g` big value (large bold font), `s` sparkline with up to 20 columns (`w`: values 0–100).

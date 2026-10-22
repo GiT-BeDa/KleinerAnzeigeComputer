@@ -139,6 +139,8 @@ the setup Wi-Fi is called `KAC-<chip ID>`, and the empty part of the bars is gre
 | `s` | **Sparkline**: label (up to 7 characters), up to 20 columns (oldest left, newest right), value on the right | `l`, `w`, `v`, `a` |
 | `-` | empty row | – |
 
+- A value that does not fit next to its label or bar is drawn in a smaller font, and cut with `..` if it still does
+  not fit (since 0.8.11); the label always stays readable.
 - `l` = label, `v` = value, `p` = bar fill 0–100 (percent), `w` = list of values 0–100 for `s` (the last 20 are kept),
   e.g. `{"y":"s","l":"CRC/min","v":"1,2","w":[5,10,8,20,35]}`; with `a` = 1 the newest column is red
 - `a` = 1 → **alert**: the value (for headings also the label) or the bar turns **red**
@@ -199,13 +201,13 @@ same result; the image contains no secret, every device creates its own key.
 ### 4.1 Flash the ready-made image (no compiler needed)
 
 1. Download the latest image from [`firmware/`](firmware/), e.g.
-   [kac-0.8.10.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.8.10.bin), and check its MD5
-   (`38421f5006d0ba3e5a6f4cc68b76ff5b` for 0.8.10, all values in [`firmware/README.md`](firmware/README.md)).
+   [kac-0.8.11.bin](https://github.com/GiT-BeDa/KleinerAnzeigeComputer/raw/main/firmware/kac-0.8.11.bin), and check its MD5
+   (`a59a2958512506b1c1ab8f4d3ae35363` for 0.8.11, all values in [`firmware/README.md`](firmware/README.md)).
 2. Find the device's address in your router (the factory firmware also shows it on the display) and open
    `http://<device>/update`.
 3. Choose the file in the **firmware** field (not "filesystem") and click **Update**, or use curl:
    ```sh
-   curl -F "firmware=@kac-0.8.10.bin" http://<device>/update
+   curl -F "firmware=@kac-0.8.11.bin" http://<device>/update
    # → "Update Success! Rebooting..."
    ```
 4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the
