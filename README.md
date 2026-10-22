@@ -12,6 +12,11 @@ On the network each device calls itself `KleinerAnzeigeComputer-<chip ID>` (host
 **The story behind it, with photos:** [KAC: A small cube becomes a status display for network, firewall and NAS](https://www.bk99.de/en/blog/2026/kac/)
 on bk99.de ([German version](https://www.bk99.de/blog/2026/kac/)). The device's built-in guide page links there via QR code.
 
+> **Logging in:** the settings page `http://<device>/` and the firmware update `http://<device>/update` ask for a
+> user name and a password. The **user name is always `admin`**, the **password is the device key** (shown on the
+> setup screen and on the display's Device page). Use `http://`, not `https://`: the device has no HTTPS, so a
+> browser that switches to HTTPS automatically cannot connect.
+
 <p align="center"><img src="docs/images/two-devices.jpg" width="600" alt="Two SmallTV Ultra running KAC: a test page and the NAS page"></p>
 
 **Contents**
@@ -211,7 +216,8 @@ same result; the image contains no secret, every device creates its own key.
    # → "Update Success! Rebooting..."
    ```
 4. The device restarts with KAC and shows **"Setup"**: continue with chapter 5, steps 2–5. Write down the
-   **device key** shown there; your dashboard needs it.
+   **device key** shown there: it is the password for the settings page and the update (user name `admin`) and
+   the `X-Token` for your dashboard.
 
 Tested with factory firmware Ultra-V9.0.51. It works because KAC is built exactly like the factory image
 (Arduino ESP8266 core, same eboot bootloader, DIO, 4 MB, 40 MHz). The image has to fit into the free space next
@@ -238,8 +244,10 @@ See chapter 8. No key is needed for building.
    with the night hours, and your own **device key**
    (1–32 printable characters; empty keeps the current one). **Save**. To change only the time zone or the
    key, leave the Wi-Fi password empty: the stored one is kept for the same network.
-5. The device restarts and connects. The access point is off again. While no dashboard data arrives, the
-   built-in Device page shows the device key as well.
+5. The device restarts and connects. The access point is off again. The built-in Device page (shown while no
+   dashboard data arrives) also shows the device key.
+6. From now on the settings page is `http://<device>/`: log in with user name **`admin`** and the **device key**
+   as password.
 
 Without input, setup ends after **15 minutes** with a restart. The setup page also offers the firmware update as
 a rescue path in case of broken firmware.
@@ -529,7 +537,9 @@ curl -u "admin:<device key>" -F "firmware=@.pio/build/smalltv/firmware.bin" http
 | Clock shows `--:--` | no NTP response yet; allow DNS/NTP in the network |
 | Device/Guide pages instead of your pages | no data for 10 min (or never): program not running, wrong key (`403`) or wrong address |
 | `403` when sending | `X-Token` wrong or missing |
-| Device key forgotten | power-cycle gesture (chapter 5): the setup screen and page show it, and you can set a new one |
+| Settings page or `/update` keeps asking for the password | user name is **`admin`**, password is the device key; use `http://` (the device has no HTTPS); try a private browser window if old credentials are cached |
+| Settings page does not load at all | the browser switched to `https://` (HTTPS-only mode): type `http://` explicitly and allow it; or your computer is in a network that cannot reach the device (guest Wi-Fi, client isolation) |
+| Device key forgotten | it is shown on the built-in Device page; otherwise power-cycle gesture (chapter 5): the setup screen and page show it, and you can set a new one |
 | `400 json` | invalid JSON (e.g. comments included) |
 | Characters missing | only ASCII and `°` are displayed |
 | Text cut off or overlapping | shorten the text (chapter 7.1) |
